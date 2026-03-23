@@ -1,0 +1,15 @@
+# Configuración y Entornos Virtuales
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Variables de entorno y secretos HIPER CONFIDENCIALES
+.env
+
+# Archivos de SO o IDEs
+.vscode/
+.idea/
+.DS_Store
+.gemini/
