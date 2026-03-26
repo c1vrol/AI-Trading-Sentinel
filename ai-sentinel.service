@@ -3,15 +3,9 @@ Description=AI Trading Sentinel (Discord Bot)
 After=network.target
 
 [Service]
-# Asegúrate de cambiar "TU_USUARIO" por el nombre de tu usuario en GCP (ej. ubuntu o andre)
-User=TU_USUARIO
-WorkingDirectory=/home/TU_USUARIO/discord-bot
-
-# Aseguramos que use el entorno virtual activado
-Environment="PATH=/home/TU_USUARIO/discord-bot/venv/bin:$PATH"
-ExecStart=/home/TU_USUARIO/discord-bot/venv/bin/python main.py
-
-# Que se reinicie siempre si crashea por error de red
+User=c1vrol_main
+WorkingDirectory=/home/c1vrol_main/AI-Trading-Sentinel
+ExecStart=/home/c1vrol_main/AI-Trading-Sentinel/venv/bin/python main.py
 Restart=always
 RestartSec=10
 

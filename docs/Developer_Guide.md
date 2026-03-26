@@ -12,6 +12,7 @@ El modelo de monetización del **AI Trading Sentinel** no es la venta del códig
 3. [El Flujo de Asincronía: Vida o Muerte para tu SaaS](#3-el-flujo-de-asincronía-vida-o-muerte-para-tu-saas)
 4. [Propiedad Intelectual y Seguridad de Claves](#4-propiedad-intelectual-y-seguridad-de-claves)
 5. [Despliegue y Hosting Inicial (VPS)](#5-despliegue-y-hosting-inicial-vps)
+6. [Sistema de Reaction Roles y Auditoría de Logs](#6-sistema-de-reaction-roles-y-auditoría-de-logs)
 
 ---
 
@@ -61,3 +62,28 @@ En la Fase 1, no necesitas gastar $50 USD mensuales en clusters o nubes compleja
 2. **DigitalOcean o Vultr (Droplets básicos):** Si prefieres algo más amigable al usuario con excelentes guías, sus VPS básicos de $6 USD son más que suficientes mientras estás en el Free Tier y arrancas las iteraciones con tus primeros usuarios beta.
 
 *Para mantener el bot vivo 24/7 en el servidor, simplemente ejecuta tu script utilizando gestores de procesos de Linux como `pm2`, `tmux` o `systemd`.*
+
+---
+
+## 6. Sistema de Reaction Roles y Auditoría de Logs
+
+Recientemente, se ha integrado un poderoso sistema de **Reaction Roles (Verificación por Reacciones)** y **Registros de Auditoría (Logs)** para automatizar la gestión de acceso de los usuarios a ciertas áreas VIP o flujos específicos en el servidor. 
+
+### Flujo de Verificación (✅ / ❌) y Preservación de Roles
+* **Aprobación (Reacción ✅):** Cuando un usuario reacciona con ✅ en los mensajes de verificación, el bot lee su rol base actual y le asigna el nuevo nivel VIP correspondiente. Nuestro bot **NO remueve el rol base original** para que los bots externos (ej. Whop) puedan seguir gestionándolo.
+* **Denegación (Reacción ❌):** Si el usuario reacciona con ❌, el bot le quita acceso a sus VIPs y le asigna temporalmente un rol de restricción. El rol base se conserva de igual forma, asegurando que su membresía original no se pierda en otras integraciones.
+* **Revocación:** Si el usuario decide quitar su reacción de ✅, el bot realizará un "rollback" parcial revirtiendo al usuario, removiéndole su rol VIP exclusivamente.
+
+### Sincronización Externa de Roles
+Dado que este sistema convive con integraciones externas (ej. pago de bots de membresía), el Bot Sentinel ahora incorpora la validación mediante el evento `on_member_update`.
+* Si el **bot de pagos retira el rol base** del usuario porque su suscripción expiró, Sentinel detectará este cambio y **secará instantánea y automáticamente el respectivo rol VIP**.
+* Esto blinda el acceso al material exclusivo, garantizando que nadie consuma contenido sin contar con sus suscripciones requeridas actualizadas.
+
+### Registros de Seguridad (Log Embeds)
+Toda la actividad del sistema de Reaction Roles se audita en el canal de Logs designado mediante mensajes tipo *Embed* con colores institucionales (azul para aprobaciones/revocaciones, rojo para denegaciones).
+El log contiene:
+* Mención y datos del usuario (Nombre + ID).
+* Emoji exacto que activó la acción.
+* Fecha de ejecución automática y el resultado técnico final (ej. *Roles actualizados exitosamente*).
+
+Este registro te permitirá mantener el control estricto de quién accede a las funciones de tu SaaS de Trading y cómo se le aplican sus membresías y restricciones.

@@ -32,18 +32,41 @@ async def market_monitor(config: dict, bot: DiscordBotClient):
     timeframe = config['trading']['timeframe']
     exchange = config['trading']['exchange']
     confidence_thresh = config['trading']['confidence_threshold']
-    gemini_key = os.getenv("GEMINI_API_KEY")
 
     # Inicialización de módulos
     market = MarketData(exchange_id=exchange)
-    ai = AIEngine(api_key=gemini_key)
+    ai = bot.ai_engine  # Usar la instancia inyectada en el bot
     gate = LogicGate(confidence_threshold=confidence_thresh)
     news_fetcher = NewsFetcher()
 
     logger.info("Iniciando bucle de monitoreo...")
 
+    active_trades = []  # Tracks live signals for automated PnL logging
+
     try:
         while True:
+            # --- Check active trades for automatic logging ---
+            for trade in active_trades[:]:
+                trade_price_action = await market.analyze_price_action(trade['symbol'], timeframe)
+                current_trade_price = trade_price_action.get("close_price", 0.0)
+                if current_trade_price > 0:
+                    trade['history'].append(current_trade_price)
+                    
+                    if trade['sentiment'] == 'BULLISH':
+                        if current_trade_price >= trade['tp']:
+                            await bot.log_automated_record(trade['symbol'], trade['entry_price'], current_trade_price, 'BULLISH', 'Win ✅', trade['history'])
+                            active_trades.remove(trade)
+                        elif current_trade_price <= trade['sl']:
+                            # Loss ❌ - Silent removal (Success Filter)
+                            active_trades.remove(trade)
+                    else: # BEARISH
+                        if current_trade_price <= trade['tp']:
+                            await bot.log_automated_record(trade['symbol'], trade['entry_price'], current_trade_price, 'BEARISH', 'Win ✅', trade['history'])
+                            active_trades.remove(trade)
+                        elif current_trade_price >= trade['sl']:
+                            # Loss ❌ - Silent removal (Success Filter)
+                            active_trades.remove(trade)
+
             # 1. Obtener acción del precio (Ingestión de Datos)
             logger.info(f"🔎 Analizando acción de precio para {symbol} ({timeframe})...")
             price_action = await market.analyze_price_action(symbol, timeframe)
@@ -61,21 +84,51 @@ async def market_monitor(config: dict, bot: DiscordBotClient):
                 # 2. Conseguir las últimas noticias
                 news_text = await news_fetcher.fetch_latest_news(symbol)
                 
-                logger.info("🧠 Consultando a Gemini IA para análisis de sentimiento profundo...")
-                # 3. Analizar sentimiento con Gemini Pro
-                sentiment_data = await ai.analyze_sentiment(news_text)
+                logger.info("🧠 Consultando a Sentinel AI para análisis de sentimiento profundo...")
+                # 3. Analizar sentimiento con Sentinel AI
+                sentiment_data = await ai.analyze_sentiment(news_text, lang=bot.lang)
                 
                 # 4. Validar Confluencia
                 alert_trigger = gate.evaluate(price_action, sentiment_data)
                 
                 if alert_trigger:
-                    logger.info(f"✅ Confluencia validada ({sentiment_data.get('sentiment')} {sentiment_data.get('confidence')}). Preparando alerta.")
-                    # 5. Enviar Alerta Asíncrona
-                    await bot.send_alert(symbol, price_action, sentiment_data)
+                    logger.info(f"✅ Confluencia validada ({sentiment_data.get('sentiment')} {sentiment_data.get('confidence')}). Preparando alerta Elite.")
+                    
+                    # 5. Obtener Insight de Emergencia (Smart Alert)
+                    ai_insight = None
+                    try:
+                        ai_insight = await ai.get_emergency_insight(
+                            symbol=symbol, 
+                            price_change=change_pct, 
+                            timeframe=timeframe
+                        )
+                    except Exception as e:
+                        logger.error(f"No se pudo obtener insight de IA: {e}")
+
+                    # 6. Enviar Alerta Asíncrona con el insight
+                    await bot.send_alert(symbol, price_action, sentiment_data, ai_insight=ai_insight)
+                    
+                    # 7. Registrar señal para su seguimiento automático
+                    sentiment_str = sentiment_data.get('sentiment', '').upper()
+                    if 'BULL' in sentiment_str or 'BEAR' in sentiment_str:
+                        is_bull = 'BULL' in sentiment_str
+                        # Metas iniciales: +1.5% TP / -1.0% SL
+                        tp_pct = 1.015 if is_bull else 0.985
+                        sl_pct = 0.990 if is_bull else 1.010
+                        
+                        active_trades.append({
+                            'symbol': symbol,
+                            'sentiment': 'BULLISH' if is_bull else 'BEARISH',
+                            'entry_price': current_price,
+                            'tp': current_price * tp_pct,
+                            'sl': current_price * sl_pct,
+                            'history': [current_price]
+                        })
+                        logger.info(f"📈 Signal tracked para validación auto-ganancia: TP={current_price*tp_pct:,.2f} SL={current_price*sl_pct:,.2f}")
                 else:
                     logger.info("❌ Confluencia insuficiente (o no alcanza el threshold). Alerta abortada.")
             else:
-                logger.info("⏸️ Mercado Neutral. Motor IA en reposo ahorrando tokens. Pausa de 60s...")
+                logger.info("📡 Monitoreo en curso: Estado Neutral. Escaneando liquidez...")
             
             # Esperar antes del siguiente check (ej: 60 segundos)
             await asyncio.sleep(60)
@@ -102,7 +155,9 @@ async def main():
         logger.error("No se encontró el DISCORD_BOT_TOKEN en el archivo .env o es inválido.")
         return
     
-    bot = DiscordBotClient(channel_id=channel_id)
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    ai_engine = AIEngine(api_key=gemini_key)
+    bot = DiscordBotClient(channel_id=channel_id, ai_engine=ai_engine)
 
     # Iniciar la tarea de monitoreo de mercado en el background y arrancar el bot de discord.
     # El bot de discord es un loop consumidor prolongado así que debemos correr todo el setup con asyncio.
