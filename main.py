@@ -5,6 +5,7 @@ import os
 
 from core.market_data import MarketData
 from core.ai_engine import AIEngine
+from core.ai_polish_manager import should_run_alert_second_read, volatility_alert_second_read
 from core.logic_gate import LogicGate
 from interfaces.discord_bot import DiscordBotClient
 from scrapers.news_fetcher import NewsFetcher
@@ -83,10 +84,13 @@ async def market_monitor(config: dict, bot: DiscordBotClient):
                 logger.info(f"⚠️ Volatilidad detectada ({status}). Iniciando subsistema de IA y Noticias...")
                 # 2. Conseguir las últimas noticias
                 news_text = await news_fetcher.fetch_latest_news(symbol)
-                
+                market_snap = await market.get_ai_snapshot(symbol)
+
                 logger.info("🧠 Consultando a Sentinel AI para análisis de sentimiento profundo...")
-                # 3. Analizar sentimiento con Sentinel AI
-                sentiment_data = await ai.analyze_sentiment(news_text, lang=bot.lang)
+                # 3. Analizar sentimiento con Sentinel AI (con hechos de mercado reales)
+                sentiment_data = await ai.analyze_sentiment(
+                    news_text, lang=bot.lang, market_context=market_snap
+                )
                 
                 # 4. Validar Confluencia
                 alert_trigger = gate.evaluate(price_action, sentiment_data)
@@ -98,15 +102,39 @@ async def market_monitor(config: dict, bot: DiscordBotClient):
                     ai_insight = None
                     try:
                         ai_insight = await ai.get_emergency_insight(
-                            symbol=symbol, 
-                            price_change=change_pct, 
-                            timeframe=timeframe
+                            symbol=symbol,
+                            price_change=change_pct,
+                            timeframe=timeframe,
+                            lang=bot.lang,
+                            market_snapshot=market_snap,
                         )
                     except Exception as e:
                         logger.error(f"No se pudo obtener insight de IA: {e}")
 
+                    second_read = None
+                    if should_run_alert_second_read(sentiment_data, change_pct):
+                        try:
+                            second_read = await volatility_alert_second_read(
+                                symbol,
+                                sentiment_data,
+                                ai_insight,
+                                market_snap,
+                                change_pct,
+                                timeframe=timeframe,
+                            )
+                            if second_read:
+                                second_read = second_read.strip()[:1024] or None
+                        except Exception as e:
+                            logger.error(f"Alert second read: {e}")
+
                     # 6. Enviar Alerta Asíncrona con el insight
-                    await bot.send_alert(symbol, price_action, sentiment_data, ai_insight=ai_insight)
+                    await bot.send_alert(
+                        symbol,
+                        price_action,
+                        sentiment_data,
+                        ai_insight=ai_insight,
+                        second_read_note=second_read,
+                    )
                     
                     # 7. Registrar señal para su seguimiento automático
                     sentiment_str = sentiment_data.get('sentiment', '').upper()

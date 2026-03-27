@@ -155,10 +155,61 @@ class MarketData:
         
         if current_rsi < 30:
             return {"valid": True, "type": "Oversold 🟢", "rsi": current_rsi, "price": current_price}
-        elif current_rsi > 70:
+        if current_rsi > 70:
             return {"valid": True, "type": "Overbought 🔴", "rsi": current_rsi, "price": current_price}
-            
-        return {"valid": False}
+
+        return {"valid": False, "rsi": current_rsi, "price": current_price}
+
+    async def get_ai_snapshot(self, symbol: str) -> dict:
+        """
+        Hechos compactos desde la API del exchange para prompts de IA (pocas velas = menos rate-limit).
+        Solo OHLCV agregado; sin opiniones.
+        """
+        out: dict = {"pair": symbol, "source": "ccxt_ohlcv", "error": None}
+        try:
+            h1 = await self.fetch_ohlcv(symbol, "1h", limit=30)
+            m15 = await self.fetch_ohlcv(symbol, "15m", limit=34)
+            if not h1 or len(h1) < 12:
+                out["error"] = "insufficient_1h_data"
+                return out
+
+            closes_h = [c[4] for c in h1]
+            last = float(closes_h[-1])
+            look = min(24, len(h1))
+            ref = float(closes_h[-look])
+            pct_24h = ((last - ref) / ref * 100.0) if ref else 0.0
+            slice_h = h1[-look:]
+            hi_24 = max(float(c[2]) for c in slice_h)
+            lo_24 = min(float(c[3]) for c in slice_h)
+            rsi_1h = self.calculate_rsi(closes_h, 14)
+
+            vol_last = float(h1[-1][5])
+            vol_window = [float(c[5]) for c in h1[-24:-1]]
+            vol_ma = sum(vol_window) / len(vol_window) if vol_window else vol_last
+            vol_ratio = (vol_last / vol_ma) if vol_ma else 1.0
+
+            rsi_15 = 50.0
+            last_15 = last
+            if m15 and len(m15) >= 16:
+                c15 = [float(c[4]) for c in m15[:-1]]
+                last_15 = c15[-1]
+                rsi_15 = self.calculate_rsi(c15, 14)
+
+            prec = 8 if last < 1.0 else (4 if last < 100.0 else 2)
+            out.update({
+                "last_close_1h": round(last, prec),
+                "last_close_15m": round(last_15, prec),
+                "approx_pct_change_24h": round(pct_24h, 3),
+                "range_24h_high": round(hi_24, prec),
+                "range_24h_low": round(lo_24, prec),
+                "rsi_14_1h": round(rsi_1h, 2),
+                "rsi_14_15m": round(rsi_15, 2),
+                "volume_1h_vs_prior_ma": round(vol_ratio, 3),
+            })
+        except Exception as e:
+            logger.error("get_ai_snapshot %s: %s", symbol, e)
+            out["error"] = str(e)[:120]
+        return out
 
     async def close_connection(self):
         """

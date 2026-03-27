@@ -2,11 +2,13 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 from google import genai
+import logging
 import asyncio
 import datetime
 import random
 import os
 import json
+import re
 import time
 import io
 import urllib.parse
@@ -15,6 +17,16 @@ import aiohttp
 import psutil
 from typing import Literal
 
+from core.ai_engine import AIEngine, quantum_scan_output_lang
+from core.ai_polish_manager import (
+    generate_always_grok_or_free_first,
+    generate_scan_fallback,
+    normalize_grok_scan_mode,
+    polish_scan_text,
+)
+
+_log = logging.getLogger(__name__)
+
 # ==========================================
 # 🗺️ MAPA DE CANALES Y COLORES
 # ==========================================
@@ -22,7 +34,7 @@ TRIAL_ALERTS_ID = 1486410079837094079
 FREE_ANALYSIS_ID = 1486410103627190443
 MAJOR_SIGNALS_ID = 1486410173193912501
 DAILY_BIAS_ID = 1486410192093712384
-ORDER_FLOWS_ID = 1486410214604275822
+VOLUME_SPIKES_ID = 1486410214604275822
 QUANTUM_SIGNALS_ID = 1486410255780024371
 AI_DEEP_DIVE_ID = 1486410290819236061
 UPGRADE_CHANNEL_ID = 1486410002880139335
@@ -78,12 +90,25 @@ class SentinelCog(commands.Cog):
         self.bot = bot
         self.ai_engine = ai_engine
             
-        # Global Quota Guard (Safety counter per session)
+        # Fusible diario (persistido en data/bot_ai_fuse_state.json)
         self.daily_ai_count = 0
         self.last_reset_date = datetime.datetime.now(datetime.timezone.utc).date()
+        self._bot_ai_fuse_path = os.path.join(os.path.dirname(__file__), "..", "data", "bot_ai_fuse_state.json")
+        self._load_bot_ai_fuse_from_disk()
         
-        # Memoria y Caché
-        self.ai_cache = {}  # {'BTC': {'time': float, 'text': str}}
+        # Caché Quantum Scan: compartida entre todos los usuarios (misma moneda → mismo texto)
+        self.quantum_scan_cache_path = os.path.join(
+            os.path.dirname(__file__), "..", "data", "quantum_scan_cache.json"
+        )
+        self.ai_scan_user_api_path = os.path.join(
+            os.path.dirname(__file__), "..", "data", "ai_scan_user_api_times.json"
+        )
+        # {'BTC': {'time': float, 'text': str, 'dual_desk'?: bool}}
+        self.ai_cache = {}
+        self._ai_scan_user_api_times: dict[str, float] = {}
+        self._load_quantum_scan_cache_from_disk()
+        self._load_ai_scan_user_api_times_from_disk()
+
         self.global_cache_path = os.path.join(os.path.dirname(__file__), "..", "data", "global_cache.json")
         
         # Limitadores Diarios Tiers Gratuitos (Trial Alerts)
@@ -121,14 +146,16 @@ class SentinelCog(commands.Cog):
 
     DEEP_DIVE_TAGLINES = [
         "Three dense reads—liquidity, structure, and what could actually move price.",
+        "Momentum quality, volatility regimes, and cross-asset beta—desk-style, no hype.",
         "No fluff: funding, levels, and the calendar risks worth respecting.",
         "A fast pass across flow, key zones, and the week’s tripwires.",
         "Tape-first notes: where balance-sheet money hides and where stops cluster.",
-        "Cross-asset context in three slices—read once, trade calmer.",
+        "Cross-asset context in three slices—read once, size risk deliberately.",
     ]
-    # Last N VIP deep-dive embeds (3 blocks each) must use disjoint block IDs — feels organic in chat.
+    # Last N VIP deep-dive runs (3 blocks each, split across embeds) must use disjoint block IDs.
     DEEP_DIVE_EMBED_HISTORY = 5
     DEEP_DIVE_RECENT_BLOCK_CAP = DEEP_DIVE_EMBED_HISTORY * 3
+    DEEP_DIVE_BLOCKS_PER_EMBED = 2
     # Free channel: last N single-block embeds must not repeat the same block id when avoidable.
     FREE_ANALYSIS_EMBED_HISTORY = 5
 
@@ -200,22 +227,168 @@ class SentinelCog(commands.Cog):
             json.dump(library, f, indent=4, ensure_ascii=False)
         return selected
 
+    def _load_bot_ai_fuse_from_disk(self):
+        if not os.path.exists(self._bot_ai_fuse_path):
+            return
+        try:
+            with open(self._bot_ai_fuse_path, encoding="utf-8") as f:
+                data = json.load(f)
+            today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+            if data.get("utc_date") == today:
+                self.daily_ai_count = int(data.get("count", 0))
+                self.last_reset_date = datetime.datetime.now(datetime.timezone.utc).date()
+        except Exception:
+            pass
+
+    def _save_bot_ai_fuse_to_disk(self):
+        try:
+            os.makedirs(os.path.dirname(self._bot_ai_fuse_path), exist_ok=True)
+            payload = {
+                "utc_date": self.last_reset_date.isoformat(),
+                "count": int(self.daily_ai_count),
+            }
+            with open(self._bot_ai_fuse_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
     def _check_ai_quota(self, reservation: bool = False) -> bool:
-        """Protects the daily 100-req limit. 
-        Limits: User (30 max), System/VIP overrides (90 hardcap).
+        """
+        Fusible blando diario en proceso (además del reparto por llave en AIEngine).
+        Ajusta con SENTINEL_USER_AI_DAILY_CAP / SENTINEL_SYSTEM_AI_DAILY_CAP.
         """
         now = datetime.datetime.now(datetime.timezone.utc).date()
         if now > self.last_reset_date:
             self.daily_ai_count = 0
             self.last_reset_date = now
-            
-        limit = 90 if reservation else 30
+            self._save_bot_ai_fuse_to_disk()
+
+        user_cap = int(os.getenv("SENTINEL_USER_AI_DAILY_CAP", "200"))
+        sys_cap = int(os.getenv("SENTINEL_SYSTEM_AI_DAILY_CAP", "400"))
+        limit = sys_cap if reservation else user_cap
         current_val = int(self.daily_ai_count)
         if current_val >= limit:
             return False
-            
+
         self.daily_ai_count = current_val + 1
+        self._save_bot_ai_fuse_to_disk()
         return True
+
+    def _ai_scan_cache_ttl(self) -> float:
+        """Ventana ‘fresca’: briefing de primera clase sin nueva llamada a API."""
+        return float(os.getenv("AI_SCAN_CACHE_TTL_SEC", "7200"))
+
+    def _ai_scan_cache_soft_ttl(self) -> float:
+        """Ventana extendida: mismo texto en caché, sin API; footer distinto (transparente)."""
+        mult = float(os.getenv("AI_SCAN_CACHE_SOFT_MULT", "1.75"))
+        return max(self._ai_scan_cache_ttl(), self._ai_scan_cache_ttl() * mult)
+
+    def _quantum_scan_cache_hit(self, coin: str) -> tuple[str, str, str | None] | None:
+        """
+        (text, tier, polish_provider) si hay entrada válida; tier 'fresh' | 'extended'.
+        polish_provider: etiqueta auxiliar (ej. groq, grok, groq+grok) o None.
+        """
+        cu = str(coin).upper()
+        cached = self.ai_cache.get(cu)
+        if not cached or not isinstance(cached.get("text"), str):
+            return None
+        text = str(cached["text"]).strip()
+        if not text:
+            return None
+        age = time.time() - float(cached.get("time", 0))
+        hard = self._ai_scan_cache_ttl()
+        soft = self._ai_scan_cache_soft_ttl()
+        prov = cached.get("polish_provider")
+        if isinstance(prov, str) and prov.strip():
+            polish = prov.strip()
+        else:
+            polish = "grok" if cached.get("dual_desk") else None
+        if age < hard:
+            return text, "fresh", polish
+        if age < soft:
+            return text, "extended", polish
+        return None
+
+    def _quantum_ai_scan_api_cooldown_sec(self) -> int:
+        """Solo aplica cuando hace falta llamar a Gemini (no si hay caché fresca)."""
+        return int(os.getenv("QUANTUM_AI_SCAN_API_COOLDOWN_SEC", "21600"))
+
+    def _load_quantum_scan_cache_from_disk(self):
+        if not os.path.exists(self.quantum_scan_cache_path):
+            return
+        try:
+            with open(self.quantum_scan_cache_path, encoding="utf-8") as f:
+                raw = json.load(f)
+            now = time.time()
+            soft = self._ai_scan_cache_soft_ttl()
+            for coin, entry in raw.items():
+                if not isinstance(entry, dict):
+                    continue
+                c = str(coin).upper()
+                t = float(entry.get("time", 0))
+                if now - t >= soft or not entry.get("text"):
+                    continue
+                row = {"time": t, "text": str(entry["text"])}
+                if entry.get("dual_desk") is not None:
+                    row["dual_desk"] = bool(entry["dual_desk"])
+                if entry.get("polish_provider"):
+                    row["polish_provider"] = str(entry["polish_provider"])
+                self.ai_cache[c] = row
+        except Exception as e:
+            print(f"quantum_scan_cache load: {e}")
+
+    def _save_quantum_scan_cache_to_disk(self):
+        try:
+            os.makedirs(os.path.dirname(self.quantum_scan_cache_path), exist_ok=True)
+            now = time.time()
+            soft = self._ai_scan_cache_soft_ttl()
+            clean = {
+                k: v
+                for k, v in self.ai_cache.items()
+                if isinstance(v, dict) and now - float(v.get("time", 0)) < soft
+            }
+            self.ai_cache = clean
+            with open(self.quantum_scan_cache_path, "w", encoding="utf-8") as f:
+                json.dump(clean, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"quantum_scan_cache save: {e}")
+
+    def _load_ai_scan_user_api_times_from_disk(self):
+        if not os.path.exists(self.ai_scan_user_api_path):
+            return
+        try:
+            with open(self.ai_scan_user_api_path, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                self._ai_scan_user_api_times = {str(k): float(v) for k, v in data.items()}
+        except Exception as e:
+            print(f"ai_scan_user_api_times load: {e}")
+
+    def _save_ai_scan_user_api_times_to_disk(self):
+        try:
+            os.makedirs(os.path.dirname(self.ai_scan_user_api_path), exist_ok=True)
+            with open(self.ai_scan_user_api_path, "w", encoding="utf-8") as f:
+                json.dump(self._ai_scan_user_api_times, f, indent=2)
+        except Exception as e:
+            print(f"ai_scan_user_api_times save: {e}")
+
+    def _ai_scan_user_api_key(self, user_id: int, coin: str) -> str:
+        return f"{user_id}:{str(coin).upper()}"
+
+    def _ai_scan_user_api_blocked(self, user_id: int, coin: str) -> tuple[bool, int]:
+        gap = self._quantum_ai_scan_api_cooldown_sec()
+        k = self._ai_scan_user_api_key(user_id, coin)
+        last = float(self._ai_scan_user_api_times.get(k, 0.0))
+        if last <= 0:
+            return False, 0
+        elapsed = time.time() - last
+        if elapsed < gap:
+            return True, max(1, int(gap - elapsed))
+        return False, 0
+
+    def _record_ai_scan_api_use(self, user_id: int, coin: str):
+        self._ai_scan_user_api_times[self._ai_scan_user_api_key(user_id, coin)] = time.time()
+        self._save_ai_scan_user_api_times_to_disk()
 
     def _save_global_cache(self, key: str, text: str):
         """Guarda un texto persistente en el cache global (JSON)"""
@@ -283,6 +456,42 @@ class SentinelCog(commands.Cog):
                 
             embed.add_field(name=field_name, value=formatted_chunk, inline=inline)
 
+    @staticmethod
+    def _hft_fallback_sentiment(local_type: str) -> str:
+        t = (local_type or "").lower()
+        if "oversold" in t:
+            return "Mean-reversion bias (oversold tape)"
+        if "overbought" in t:
+            return "Mean-reversion bias (overbought tape)"
+        return "Local extreme — desk review"
+
+    def _build_ai_deep_dive_embeds(self, blocks: list[dict], tag: str) -> list[discord.Embed]:
+        """Same block fields as before; at most DEEP_DIVE_BLOCKS_PER_EMBED blocks per Discord embed."""
+        per = self.DEEP_DIVE_BLOCKS_PER_EMBED
+        embeds: list[discord.Embed] = []
+        ts = discord.utils.utcnow()
+        for i in range(0, len(blocks), per):
+            chunk = blocks[i : i + per]
+            if i == 0:
+                description = tag
+            else:
+                description = "**AI Deep Dive • Continued**"
+            embed = discord.Embed(
+                title="🧠 AI Deep Dive",
+                description=description,
+                color=COLOR_QUANTUM,
+                timestamp=ts,
+            )
+            for b in chunk:
+                emoji = b.get("emoji", "▫️")
+                title = b.get("title", "Note")
+                body = b.get("content", "N/A")
+                field_name = f"{emoji} **{title}**"
+                self._add_safe_field(embed, field_name, body, inline=False, format_type="")
+            embed.set_footer(text="Quantum Hedge Fund Analytics • Educational only")
+            embeds.append(embed)
+        return embeds
+
     async def cog_load(self):
         # Iniciar las tareas automáticas
         if not self.daily_bias_task.is_running(): self.daily_bias_task.start()
@@ -295,7 +504,9 @@ class SentinelCog(commands.Cog):
         if not self.order_flow_tracker.is_running(): self.order_flow_tracker.start()
         if not self.quantum_signals_task.is_running(): self.quantum_signals_task.start()
         if not self.weekly_performance_report.is_running(): self.weekly_performance_report.start()
-        
+        if not self.ai_usage_threshold_alert_task.is_running():
+            self.ai_usage_threshold_alert_task.start()
+
         # Link global tree error handler
         self.bot.tree.on_error = self.on_app_command_error
 
@@ -590,61 +801,209 @@ class SentinelCog(commands.Cog):
         if not any(r in [ROLE_QUANTUM, ROLE_LIFETIME, 1486476439044755497, 1486476426419900466] for r in user_roles):
             embed = discord.Embed(
                 title="🔒 Access Denied",
-                description="This deep scanning feature is exclusive to **Sentinel Quantum** members. Upgrade now to unlock full AI depth.",
+                description="This scan is exclusive to **Sentinel Quantum** members. Upgrade for the full desk workflow.",
                 color=0xff0000
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
         if not self.ai_engine:
-            await interaction.followup.send("❌ Error: AI engine not configured.", ephemeral=True)
+            embed = discord.Embed(
+                title="⏳ Sentinel Desk",
+                description="We’re reconnecting the analysis channel. **Try again in a moment.**",
+                color=COLOR_QUANTUM,
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
-        # SMART CACHE CHECK (60 Minutes TTL) - Zero Cost
-        import time
-        cached = self.ai_cache.get(coin)
-        if cached and (time.time() - cached['time']) < 3600:
-            embed = discord.Embed(title=f"🌌 Quantum Scan: {coin.upper()} [CACHED]", description=cached['text'], color=COLOR_QUANTUM, timestamp=discord.utils.utcnow())
-            embed.set_footer(text="Powered by Sentinel AI • Zero-Cost Memory")
+        # Caché compartida: misma moneda → mismo briefing (fresco o ventana extendida, sin API)
+        hit = self._quantum_scan_cache_hit(coin)
+        if hit:
+            text, tier, polish_tag = hit
+            if tier == "fresh":
+                foot = "Sentinel Intelligence • Quantum • Live desk cache"
+            else:
+                foot = "Sentinel Intelligence • Quantum • Extended briefing window (no new API call)"
+            if polish_tag:
+                foot += f" • Polish ({polish_tag})"
+            embed = discord.Embed(
+                title=f"🌌 Quantum Scan: {coin.upper()}",
+                description=text,
+                color=COLOR_QUANTUM,
+                timestamp=discord.utils.utcnow(),
+            )
+            embed.set_footer(text=foot)
             await interaction.followup.send(embed=embed)
             return
 
-        # Global Quota Check (Safety guard before rotation, User Limit: 30)
-        if not self._check_ai_quota(reservation=False):
-            await interaction.followup.send("🚨 **System Load at Max**: Cuota de usuarios VIP agotada por hoy. Los sistemas de alerta en vivo operan con normalidad.", ephemeral=True)
+        # Sin caché fresca: cooldown por usuario+moneda antes de gastar API (no aplica si arriba hubo caché)
+        blocked, retry_sec = self._ai_scan_user_api_blocked(interaction.user.id, coin)
+        if blocked:
+            if retry_sec < 120:
+                human = f"{retry_sec}s"
+            elif retry_sec < 3600:
+                human = f"~{max(1, retry_sec // 60)} min"
+            else:
+                human = f"~{retry_sec // 3600}h"
+            embed = discord.Embed(
+                title="⏳ Fresh scan on cooldown",
+                description=(
+                    f"Your next **new** desk scan for **{coin.upper()}** is available in **{human}**. "
+                    "If another member refreshes this asset first, you’ll receive that same briefing as soon as it’s cached."
+                ),
+                color=COLOR_QUANTUM,
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
-        prompt = f"HFT Analyst. Scan {coin}. <60 words."
-        try:
-            # USAR Misión USER_VIP (Llave 3)
-            response = await self.ai_engine.generate_response(
-                prompt=prompt,
-                mission="USER_VIP"
+        # Fusible diario en proceso (ver también reparto por llave en AIEngine)
+        if not self._check_ai_quota(reservation=False):
+            embed = discord.Embed(
+                title="⏳ High demand",
+                description="**Please try again in a few minutes.** Live channels keep updating as usual.",
+                color=COLOR_QUANTUM,
             )
-            resp_text = str(response.text)
-            self.ai_cache[coin] = {'time': time.time(), 'text': resp_text}
-            
-            embed = discord.Embed(title=f"🌌 Quantum Scan: {coin.upper()}", description=resp_text, color=COLOR_QUANTUM, timestamp=discord.utils.utcnow())
-            embed.set_footer(text="Powered by Sentinel AI • Quantum Tier")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        pair = f"{coin}/USDT"
+        gmode = normalize_grok_scan_mode()
+        polish_provider: str | None = None
+        try:
+            snap = await self.market_data.get_ai_snapshot(pair)
+            lang_scan = quantum_scan_output_lang(getattr(self.bot, "lang", "en"))
+            prompt, sys_instr = AIEngine.build_quantum_scan_prompt(coin, snap, lang=lang_scan)
+            resp_text: str | None = None
+            gemini_raw_backup: str | None = None
+            gemini_used = False
+
+            async def _gem_scan_retry(c: str, s: dict) -> str:
+                if not self.ai_engine:
+                    return ""
+                return await self.ai_engine.generate_quantum_scan_minimal(c, s, lang=lang_scan)
+
+            async def _gem_polish(t: str) -> str:
+                if not self.ai_engine:
+                    return ""
+                return await self.ai_engine.polish_quantum_scan_desk(
+                    coin.upper(), t, snap, lang=lang_scan
+                )
+
+            gem_retry = _gem_scan_retry if self.ai_engine else None
+            gem_polish_fn = _gem_polish if self.ai_engine else None
+
+            if gmode == "always_grok":
+                first, prov = await generate_always_grok_or_free_first(
+                    coin.upper(), snap, gemini_retry_fn=gem_retry
+                )
+                if first and first.strip():
+                    resp_text = first.strip()
+                    polish_provider = prov
+
+            if not resp_text:
+                try:
+                    response = await self.ai_engine.generate_response(
+                        prompt=prompt,
+                        system_instruction=sys_instr,
+                        mission="USER_VIP",
+                    )
+                    resp_text = str(response.text or "").strip() or None
+                    if resp_text:
+                        gemini_used = True
+                except Exception as ge:
+                    fb, prov = await generate_scan_fallback(
+                        coin.upper(), snap, gemini_retry_fn=gem_retry
+                    )
+                    if fb:
+                        resp_text = fb.strip()
+                        polish_provider = prov
+                    if not resp_text:
+                        raise ge
+
+            if not resp_text:
+                fb, prov = await generate_scan_fallback(
+                    coin.upper(), snap, gemini_retry_fn=gem_retry
+                )
+                if fb:
+                    resp_text = fb.strip()
+                    polish_provider = prov
+
+            if gemini_used and resp_text:
+                gemini_raw_backup = resp_text.strip() or None
+                new_t, prov = await polish_scan_text(
+                    resp_text, snap, coin, gemini_polish_fn=gem_polish_fn
+                )
+                if prov and new_t.strip():
+                    resp_text = new_t.strip()
+                    polish_provider = prov
+
+            if not resp_text and gemini_raw_backup:
+                resp_text = gemini_raw_backup
+                polish_provider = polish_provider or "gemini-raw"
+
+            if not resp_text and self.ai_engine:
+                try:
+                    minimal = await self.ai_engine.generate_quantum_scan_minimal(
+                        coin.upper(),
+                        snap,
+                        lang=lang_scan,
+                    )
+                    if minimal.strip():
+                        resp_text = minimal.strip()
+                        polish_provider = (
+                            (polish_provider + "+") if polish_provider else ""
+                        ) + "gemini-minimal"
+                except Exception:
+                    pass
+
+            if not resp_text:
+                raise RuntimeError("Empty AI response")
+
+            now_ts = time.time()
+            self.ai_cache[coin.upper()] = {
+                "time": now_ts,
+                "text": resp_text,
+                "dual_desk": bool(polish_provider),
+                "polish_provider": polish_provider or "",
+            }
+            self._save_quantum_scan_cache_to_disk()
+            self._record_ai_scan_api_use(interaction.user.id, coin)
+
+            foot = "Sentinel AI • Educational only • Not financial advice • Quantum"
+            if polish_provider:
+                foot = (
+                    f"Sentinel AI • Desk polish ({polish_provider}) • Educational • Not financial advice"
+                )
+            embed = discord.Embed(
+                title=f"🌌 Quantum Scan: {coin.upper()}",
+                description=resp_text,
+                color=COLOR_QUANTUM,
+                timestamp=discord.utils.utcnow(),
+            )
+            embed.set_footer(text=foot)
             await interaction.followup.send(embed=embed)
         except Exception as e:
-            error_details = f"AI Generation Failed: {e}"
-            await interaction.followup.send(f"❌ {error_details}", ephemeral=True)
             await self.log_system_error("AI Engine API Error", f"Command /ai_scan failed for {coin}: {e}")
+            embed = discord.Embed(
+                title="⏳ Couldn’t finish this scan",
+                description="**Try again shortly.** If it persists, ping staff.",
+                color=COLOR_QUANTUM,
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="summary", description="Read the persistently cached Daily Macro Bias. Zero Cost.")
+    @app_commands.command(name="summary", description="Read the latest saved Daily Macro Bias.")
     @app_commands.checks.has_any_role(ROLE_CORE, ROLE_QUANTUM, ROLE_LIFETIME)
     async def cmd_summary(self, interaction: discord.Interaction):
         try:
             with open(self.global_cache_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                text = data.get("daily_bias", "No Daily Bias cached yet.")
+                text = data.get("daily_bias", "No Daily Macro Bias saved yet.")
         except:
-            text = "Cache file not created. Await the next broadcast."
-        embed = discord.Embed(title="📊 Daily Macro Bias (Persistent Cache)", description=text, color=COLOR_CORE)
+            text = "No briefing file yet. Await the next broadcast."
+        embed = discord.Embed(description=str(text)[:4096], color=COLOR_CORE)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="vip_analysis", description="Read the persistently cached Quantum Deep Dive. [Quantum Exclusive]")
+    @app_commands.command(name="vip_analysis", description="Read the latest saved Quantum Macro Deep Dive. [Quantum Exclusive]")
     @app_commands.checks.has_any_role(ROLE_QUANTUM, ROLE_LIFETIME)
     async def cmd_vip_analysis(self, interaction: discord.Interaction):
         try:
@@ -658,20 +1017,34 @@ class SentinelCog(commands.Cog):
                 
                 if not resp_data:
                     raise Exception("Empty Content")
-                    
-                tag = random.choice(self.DEEP_DIVE_TAGLINES)
-                embed = discord.Embed(title="🏛️ Sentinel Macro Deep Dive (Cache)", description=tag, color=COLOR_QUANTUM)
-                self._add_safe_field(embed, "💧 Liquidity State", resp_data.get('liquidity', 'N/A'), inline=False, format_type="code")
-                self._add_safe_field(embed, "🎯 Critical Zones", resp_data.get('critical_zones', 'N/A'), inline=False, format_type="code")
-                self._add_safe_field(embed, "🔮 Weekly Projection", resp_data.get('weekly_projection', 'N/A'), inline=False, format_type="code")
-                embed.set_footer(text="Premium Quantum Level • Zero Cost Access")
-                
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
+
+                if isinstance(resp_data, dict) and resp_data.get("version") == 1 and resp_data.get("blocks"):
+                    tag = resp_data.get("tag") or random.choice(self.DEEP_DIVE_TAGLINES)
+                    embeds = self._build_ai_deep_dive_embeds(list(resp_data["blocks"]), tag)
+                    await interaction.response.send_message(embeds=embeds, ephemeral=True)
+                    return
+
+                if isinstance(resp_data, dict) and resp_data.get("liquidity"):
+                    tag = random.choice(self.DEEP_DIVE_TAGLINES)
+                    embed = discord.Embed(title="🧠 AI Deep Dive", description=tag, color=COLOR_QUANTUM)
+                    self._add_safe_field(
+                        embed, "💧 Liquidity State", resp_data.get("liquidity", "N/A"), inline=False, format_type="code"
+                    )
+                    self._add_safe_field(
+                        embed, "🎯 Critical Zones", resp_data.get("critical_zones", "N/A"), inline=False, format_type="code"
+                    )
+                    self._add_safe_field(
+                        embed, "🔮 Weekly Projection", resp_data.get("weekly_projection", "N/A"), inline=False, format_type="code"
+                    )
+                    embed.set_footer(text="Quantum Hedge Fund Analytics • Legacy cache • Educational only")
+                    await interaction.response.send_message(embed=embed, ephemeral=True)
+                    return
+
+                raise Exception("Unknown cache format")
         except Exception as e:
-            text = "Cache empty or invalid format. Await the next weekly broadcast."
+            text = "No saved briefing yet or invalid format. Await the next weekly broadcast."
             
-        embed = discord.Embed(title="🌌 Quantum Deep Dive", description=text, color=COLOR_QUANTUM)
+        embed = discord.Embed(title="🧠 AI Deep Dive", description=text, color=COLOR_QUANTUM)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="test_welcome", description="[ADMIN] Trigger a test welcome card in the welcome channel.")
@@ -694,22 +1067,34 @@ class SentinelCog(commands.Cog):
         else:
             await interaction.followup.send("❌ Error generating the test card.", ephemeral=True)
 
-    @app_commands.command(name="force_global", description="[ADMIN] Force report consuming critical RPD quota.")
+    @app_commands.command(name="force_global", description="[ADMIN] Force macro report broadcast.")
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_role(ADMIN_ROLE_ID)
     async def cmd_force_global(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
         if not self._check_ai_quota(reservation=True):
-            await interaction.followup.send("⚠️ Critical Block: Global RPD at >=90. Emergency Shutdown active.")
+            await interaction.followup.send(
+                "⚠️ **Capacity reserved for live broadcasts.** Try again later.",
+                ephemeral=True,
+            )
             return
             
         try:
-            prompt = "Quick global crypto macro HFT summary. Return 50 words. End with emoji."
-            response = await self.ai_engine.generate_response(prompt=prompt, mission="ADMIN_FORCE")
+            btc_s, eth_s = await asyncio.gather(
+                self.market_data.get_ai_snapshot("BTC/USDT"),
+                self.market_data.get_ai_snapshot("ETH/USDT"),
+            )
+            prompt, sys_instr = AIEngine.build_admin_macro_prompt(
+                btc_s, eth_s, lang=getattr(self.bot, "lang", "en")
+            )
+            response = await self.ai_engine.generate_response(
+                prompt=prompt, system_instruction=sys_instr, mission="ADMIN_FORCE"
+            )
             resp_text = str(response.text)
             self._save_global_cache("daily_bias", resp_text)
             
             embed = discord.Embed(title="⚙️ Forced Daily Report (Key 4)", description=resp_text, color=COLOR_QUANTUM)
+            embed.set_footer(text="Admin macro note • Not financial advice • Data: BTC/ETH snapshot")
             await interaction.followup.send(embed=embed)
         except Exception as e:
             await interaction.followup.send(f"❌ Force Failed: {e}")
@@ -733,8 +1118,15 @@ class SentinelCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_role(ADMIN_ROLE_ID)
     async def cmd_force_quantum_signal(self, interaction: discord.Interaction):
-        await interaction.response.send_message("⚙️ Forcing Quantum HFT Signals scan...", ephemeral=True)
-        await self.quantum_signals_task.coro(self)
+        await interaction.response.defer(ephemeral=True)
+        summary = await self.run_quantum_signals_scan(forced=True)
+        posted = summary.get("posted", 0)
+        lines = summary.get("lines") or []
+        body = "\n".join(lines) if lines else "No detail."
+        await interaction.followup.send(
+            ephemeral=True,
+            content=f"**Quantum signal run** — posted **{posted}** embed(s).\n```{body}```",
+        )
 
     @app_commands.command(name="send_signal", description="[ADMIN] Broadcast manual signal to Quantum.")
     @app_commands.describe(signal="Signal text to transmit")
@@ -964,20 +1356,46 @@ class SentinelCog(commands.Cog):
         
         # System Quota check (reservation=True)
         if not self._check_ai_quota(reservation=True):
-            print("Daily Bias skipped: No AI quota remaining.")
+            print("Daily Bias skipped: no AI quota remaining.")
             return
 
         try:
-            prompt = "Write today's market macro sentiment. Max 50 words. End with SENTINEL VERDICT EMOJI 🟢🔴🟡."
-            # USAR Misión SYSTEM_LOOP (Clave 5)
+            try:
+                from zoneinfo import ZoneInfo
+
+                _now_desk = datetime.datetime.now(ZoneInfo("America/New_York"))
+            except Exception:
+                _now_desk = datetime.datetime.now(datetime.timezone.utc)
+            report_date = AIEngine.format_desk_date_english(_now_desk)
+
+            btc_s, eth_s = await asyncio.gather(
+                self.market_data.get_ai_snapshot("BTC/USDT"),
+                self.market_data.get_ai_snapshot("ETH/USDT"),
+            )
+            prompt, sys_instr = AIEngine.build_daily_bias_prompt(
+                {"BTC": btc_s, "ETH": eth_s},
+                report_date,
+            )
             response = await self.ai_engine.generate_response(
                 prompt=prompt,
-                mission="SYSTEM_LOOP"
+                system_instruction=sys_instr,
+                mission="SYSTEM_LOOP",
             )
-            resp_text = str(response.text)
-            self._save_global_cache("daily_bias", resp_text)
-            
-            embed = discord.Embed(title="📊 Daily Macro Bias", description=resp_text, color=COLOR_CORE, timestamp=discord.utils.utcnow())
+            body = str(response.text or "").strip()
+            header = f"**🌅 Daily Macro Bias** • {report_date}"
+            full_text = f"{header}\n\n{body}" if body else header
+            if len(full_text) > 4096:
+                full_text = full_text[:4093] + "..."
+            self._save_global_cache("daily_bias", full_text)
+
+            embed = discord.Embed(
+                description=full_text,
+                color=COLOR_CORE,
+                timestamp=discord.utils.utcnow(),
+            )
+            embed.set_footer(
+                text="Comentario educativo de sala • No es asesoramiento de inversión • Verifica los datos"
+            )
             await channel.send(embed=embed)
         except Exception as e:
             print(f"Daily Task Error: {e}")
@@ -999,75 +1417,335 @@ class SentinelCog(commands.Cog):
             return
 
         try:
-            tag = random.choice(self.DEEP_DIVE_TAGLINES)
-            embed = discord.Embed(
-                title="🏛️ Sentinel Macro Deep Dive",
-                description=tag,
-                color=COLOR_QUANTUM,
-                timestamp=discord.utils.utcnow()
+            trio_out = [dict(b) for b in trio]
+            de_polish = os.getenv("AI_DEEP_DIVE_POLISH", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
             )
-            for b in trio:
-                emoji = b.get("emoji", "▫️")
-                title = b.get("title", "Note")
-                body = b.get("content", "N/A")
-                field_name = f"{emoji} **{title}**"
-                self._add_safe_field(embed, field_name, body, inline=False, format_type="code")
-            ids = ", ".join(str(b.get("id", "?")) for b in trio)
-            nblk = 0
-            try:
-                with open(self.content_library_path, "r", encoding="utf-8") as f:
-                    nblk = len(json.load(f).get("informative_blocks", []))
-            except Exception:
-                pass
-            embed.set_footer(text=f"Quantum Hedge Fund Analytics • blocks [{ids}] • pool {nblk}")
-            await channel.send(embed=embed)
+            if (
+                de_polish
+                and self.ai_engine
+                and hasattr(self, "market_data")
+                and self.market_data
+                and self._check_ai_quota(reservation=True)
+            ):
+                try:
+                    btc_s, eth_s = await asyncio.gather(
+                        self.market_data.get_ai_snapshot("BTC/USDT"),
+                        self.market_data.get_ai_snapshot("ETH/USDT"),
+                    )
+                    polished = await self.ai_engine.polish_deep_dive_triplet(
+                        trio_out,
+                        {"BTC": btc_s, "ETH": eth_s},
+                    )
+                    if polished and len(polished) == len(trio_out):
+                        trio_out = polished
+                except Exception as e:
+                    print(f"AI_DEEP_DIVE_POLISH skipped: {e}")
+
+            tag = random.choice(self.DEEP_DIVE_TAGLINES)
+            embeds = self._build_ai_deep_dive_embeds(trio_out, tag)
+            cache_payload = {
+                "version": 1,
+                "tag": tag,
+                "blocks": [
+                    {
+                        "id": b.get("id"),
+                        "emoji": b.get("emoji", "▫️"),
+                        "title": b.get("title", "Note"),
+                        "content": b.get("content", "N/A"),
+                    }
+                    for b in trio_out
+                ],
+            }
+            self._save_global_cache("quantum_deep_dive", json.dumps(cache_payload, ensure_ascii=False))
+            await channel.send(embeds=embeds)
         except Exception as e:
             print(f"Deep Dive Content Error: {e}")
             await self.log_system_error("Deep Dive Failure", str(e))
 
+    @staticmethod
+    def _quantum_local_tape_block(local_signal: dict, px: float) -> str:
+        """Monospace-friendly column; first line states which RSI is the signal gate (15m closed)."""
+        cond = str(local_signal.get("type", "—"))
+        rsi = float(local_signal.get("rsi") or 0)
+        v1, v2, v3 = cond, f"{rsi:.1f}", f"${px:,.2f}"
+        w = max(len(v1), len(v2), len(v3), 10)
+        lw = 28
+        banner = "Primary gate: 15m · RSI(14) · last closed bar"
+        return (
+            f"{banner}\n"
+            f"{'Condition:':<{lw}}{v1:>{w}}\n"
+            f"{'RSI (primary, 15m):':<{lw}}{v2:>{w}}\n"
+            f"{'Reference price (closed):':<{lw}}{v3:>{w}}"
+        )
+
+    @staticmethod
+    def _quantum_confidence_block(conf_raw: str) -> str:
+        """Emoji + bar + short caption — markdown field (not code block)."""
+        key = (conf_raw or "Moderate").strip().lower()
+        if key == "high":
+            emoji, bar = "🟢", "██████████"
+            cap = "Stronger alignment between tape and desk read — still hypothetical framing."
+        elif key == "low":
+            emoji, bar = "🟠", "██░░░░░░░░"
+            cap = "Lighter conviction — use as one desk input among many."
+        else:
+            emoji, bar = "🟡", "█████░░░░░"
+            cap = "Balanced read — cross-check with your own process and live liquidity."
+        label = (conf_raw or "Moderate").strip()
+        return f"{emoji} **{label}**\n`[{bar}]`\n*{cap}*"
+
+    @staticmethod
+    def _quantum_emphasize_analysis_terms(text: str) -> str:
+        """Bold key desk terms and percentage prints for scannability (markdown field)."""
+        if not (text or "").strip():
+            return text
+        parts = text.split("**")
+        terms = (
+            "mean-reversion",
+            "mean reversion",
+            "oversold",
+            "overbought",
+            "neutral",
+            "bullish",
+            "bearish",
+        )
+        for i in range(0, len(parts), 2):
+            seg = parts[i]
+            seg = re.sub(r"([-+]?\d+\.?\d*%)", r"**\1**", seg)
+            for term in terms:
+                seg = re.sub(
+                    rf"\b({re.escape(term)})\b",
+                    lambda m: f"**{m.group(1)}**",
+                    seg,
+                    flags=re.IGNORECASE,
+                )
+            parts[i] = seg
+        return "**".join(parts)
+
+    @staticmethod
+    def _quantum_signal_tape_analysis_copy(local_signal: dict) -> str:
+        """Consumer-facing desk copy — no debug or pipeline language."""
+        c = (local_signal.get("type") or "").lower()
+        if "oversold" in c:
+            label = "oversold"
+        elif "overbought" in c:
+            label = "overbought"
+        else:
+            label = "mixed"
+        rsi_f = float(local_signal.get("rsi") or 0)
+        return (
+            f"**15m** tape shows an **{label}** conditioning read on **RSI {rsi_f:.1f}** — "
+            "the **primary** print (same value as Local Tape). "
+            "Hypothetical stress bands bracket the reference print for scenario framing — "
+            "confirm live liquidity and your own risk rules."
+        )
+
+    @staticmethod
+    def _quantum_signal_reason_is_meta(text: str) -> bool:
+        low = (text or "").lower()
+        if not low.strip():
+            return True
+        needles = (
+            "model validation",
+            "forced preview",
+            "could not be parsed",
+            "unparsed",
+            "admin channel",
+            "channel test",
+            "mechanical stress",
+            "mechanical fallback",
+            "parse failed",
+            "validation deferred",
+            "tp/sl failed sanity",
+            "desk validation skipped",
+            "sanity check",
+            "__mechanical_fallback__",
+        )
+        return any(n in low for n in needles)
+
+    @staticmethod
+    def _quantum_signal_desk_read_copy(sentiment: str, forced_preview: bool) -> str:
+        s = (sentiment or "").strip() or "Neutral skew"
+        if forced_preview:
+            return (
+                f"{s} — RSI sits outside the usual extreme gate (<30 / >70); "
+                "contextual desk snapshot only."
+            )
+        return f"{s} — consistent with the 15m tape and snapshot inputs."
+
+    async def _dispatch_quantum_signal_embed(
+        self,
+        channel,
+        symbol: str,
+        local_signal: dict,
+        ai_validation: dict,
+        *,
+        forced_preview: bool = False,
+        mechanical_fallback: bool = False,
+    ) -> None:
+        tp = float(ai_validation.get("tp", 0.0))
+        sl = float(ai_validation.get("sl", 0.0))
+        px = float(local_signal["price"])
+        pair = symbol.replace("/USDT", "").upper()
+        sentiment = (ai_validation.get("sentiment_label") or "").strip() or self._hft_fallback_sentiment(
+            local_signal["type"]
+        )
+        conf = ai_validation.get("confidence") or "Moderate"
+        reason_raw = (ai_validation.get("reason") or "").strip()
+
+        header = f"**⚡ Quantum Signal** • {pair}/USDT"
+        embed = discord.Embed(
+            description=header,
+            color=COLOR_QUANTUM,
+            timestamp=discord.utils.utcnow(),
+        )
+        desk_block = self._quantum_signal_desk_read_copy(sentiment, forced_preview)
+        tape_block = self._quantum_local_tape_block(local_signal, px)
+        levels_block = (
+            "Hypothetical stress-test only — not trade instructions\n"
+            f"• Anchor ${px:,.2f}  ·  TP ${tp:,.2f}  ·  SL ${sl:,.2f}"
+        )
+        if mechanical_fallback or self._quantum_signal_reason_is_meta(reason_raw):
+            quantum_block = self._quantum_signal_tape_analysis_copy(local_signal)
+        else:
+            quantum_block = reason_raw or self._quantum_signal_tape_analysis_copy(local_signal)
+        quantum_block = self._quantum_emphasize_analysis_terms(quantum_block)
+        conf_block = self._quantum_confidence_block(str(conf))
+        self._add_safe_field(embed, "📊 **Desk Read**", desk_block, inline=False, format_type="code")
+        self._add_safe_field(embed, "📍 **Local Tape**", tape_block, inline=False, format_type="code")
+        self._add_safe_field(embed, "🎯 **Reference Bands**", levels_block, inline=False, format_type="code")
+        self._add_safe_field(embed, "🧮 **Quantum Analysis**", quantum_block, inline=False, format_type="")
+        self._add_safe_field(embed, "⚖️ **Confidence**", conf_block, inline=False, format_type="")
+        embed.set_footer(text="Sentinel AI Quantum Engine • Educational only • Not financial advice")
+        await channel.send(embed=embed)
+
+    @staticmethod
+    def _quantum_forced_preview_mechanical_validation(local_signal: dict) -> dict:
+        """
+        When admin forces a preview, the model may return VALID:no or unparsable output.
+        Mechanical TP/SL (tight band from reference) must pass AIEngine._tp_sl_plausible — test only.
+        """
+        px = float(local_signal["price"])
+        cond = (local_signal.get("type") or "").lower()
+        raw_type = local_signal.get("type", "")
+        tp, sl = px * 1.01, px * 0.99
+        for frac in (0.15, 0.12, 0.08):
+            if "oversold" in cond:
+                tp, sl = px * (1 + frac), px * (1 - frac)
+            else:
+                tp, sl = px * (1 - frac), px * (1 + frac)
+            if AIEngine._tp_sl_plausible(px, tp, sl, raw_type):
+                break
+        return {
+            "valid": True,
+            "tp": tp,
+            "sl": sl,
+            # Embed copy is supplied in _dispatch_quantum_signal_embed when mechanical_fallback=True.
+            "reason": "__mechanical_fallback__",
+            "sentiment_label": "Neutral skew",
+            "confidence": "Low",
+        }
+
+    async def run_quantum_signals_scan(self, *, forced: bool = False) -> dict:
+        """
+        Returns summary for admin feedback. `forced` uses ETH/USDT only and bypasses the RSI gate
+        (synthetic oversold/overbought side) so the channel can be tested without waiting for extremes.
+        """
+        out: dict = {"posted": 0, "lines": []}
+        channel = self.bot.get_channel(QUANTUM_SIGNALS_ID)
+        if not channel:
+            out["lines"].append("Quantum signals channel not found (check QUANTUM_SIGNALS_ID).")
+            return out
+        if not hasattr(self, "market_data") or not self.ai_engine:
+            out["lines"].append("market_data or ai_engine not ready.")
+            return out
+
+        symbols = ["ETH/USDT"] if forced else ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+
+        for symbol in symbols:
+            try:
+                raw = await self.market_data.check_hft_signals(symbol, "15m")
+                local_signal = dict(raw)
+                forced_preview = False
+
+                if not local_signal.get("valid"):
+                    if not forced:
+                        out["lines"].append(f"{symbol}: skipped (RSI not at gate).")
+                        continue
+                    rsi_v = local_signal.get("rsi")
+                    price_v = local_signal.get("price")
+                    if rsi_v is None or price_v is None:
+                        out["lines"].append(f"{symbol}: no OHLCV / RSI data.")
+                        continue
+                    rsi_f = float(rsi_v)
+                    local_signal = {
+                        "valid": True,
+                        "type": "Oversold 🟢" if rsi_f < 50 else "Overbought 🔴",
+                        "rsi": rsi_f,
+                        "price": float(price_v),
+                    }
+                    forced_preview = True
+
+                snap = await self.market_data.get_ai_snapshot(symbol)
+                ai_validation = await self.ai_engine.evaluate_hft_signal(
+                    symbol=symbol,
+                    timeframe="15m",
+                    rsi=local_signal["rsi"],
+                    price=local_signal["price"],
+                    condition=local_signal["type"],
+                    lang="en",
+                    market_context=snap,
+                )
+
+                used_mechanical = False
+                if not ai_validation.get("valid"):
+                    if forced_preview:
+                        ai_validation = self._quantum_forced_preview_mechanical_validation(local_signal)
+                        used_mechanical = True
+                        _log.warning(
+                            "quantum forced preview: mechanical fallback for %s (AI invalid/unparsed)",
+                            symbol,
+                        )
+                    else:
+                        out["lines"].append(f"{symbol}: AI validation returned invalid.")
+                        continue
+
+                await self._dispatch_quantum_signal_embed(
+                    channel,
+                    symbol,
+                    local_signal,
+                    ai_validation,
+                    forced_preview=forced_preview,
+                    mechanical_fallback=used_mechanical,
+                )
+                out["posted"] += 1
+                posted_suffix = ""
+                if forced_preview:
+                    posted_suffix = " (forced preview"
+                    if used_mechanical:
+                        posted_suffix += ", mechanical fallback after AI invalid"
+                    posted_suffix += ")"
+                out["lines"].append(f"{symbol}: posted{posted_suffix}.")
+            except Exception as e:
+                out["lines"].append(f"{symbol}: error — {e}")
+                print(f"quantum_signals_task error [{symbol}]: {e}")
+
+        return out
+
     @tasks.loop(minutes=15)
     async def quantum_signals_task(self):
-        channel = self.bot.get_channel(QUANTUM_SIGNALS_ID)
-        if not channel or not hasattr(self, 'market_data') or not self.ai_engine: return
-        
-        for symbol in ["BTC/USDT", "ETH/USDT", "SOL/USDT"]:
-            try:
-                local_signal = await self.market_data.check_hft_signals(symbol, "15m")
-                if local_signal.get("valid"):
-                    ai_validation = await self.ai_engine.evaluate_hft_signal(
-                        symbol=symbol,
-                        timeframe="15m",
-                        rsi=local_signal["rsi"],
-                        price=local_signal["price"],
-                        condition=local_signal["type"]
-                    )
-                    
-                    if ai_validation.get("valid"):
-                        tp = ai_validation.get("tp", 0.0)
-                        sl = ai_validation.get("sl", 0.0)
-                        
-                        embed = discord.Embed(
-                            title=f"🧠 Validación Cuántica: Activa [{symbol}]",
-                            description=f"Sentinel AI ha confirmado una ineficiencia en el flujo de órdenes.\n\n"
-                                        f"**Situación Local:** {local_signal['type']} (RSI: {local_signal['rsi']:.1f})\n"
-                                        f"**Entrada Sugerida:** ${local_signal['price']:,.2f}\n"
-                                        f"**Target Profit (TP):** ${tp:,.2f}\n"
-                                        f"**Stop Loss (SL):** ${sl:,.2f}\n\n"
-                                        f"**Análisis HFT:** {ai_validation.get('reason', 'Flujo de liquidez validado.')}",
-                            color=COLOR_QUANTUM,
-                            timestamp=discord.utils.utcnow()
-                        )
-                        embed.set_footer(text="Premium Quantum Level • Algorithmic Signal")
-                        await channel.send(embed=embed)
-            except Exception as e:
-                print(f"Error en quantum_signals_task para {symbol}: {e}")
+        await self.run_quantum_signals_scan(forced=False)
 
     @tasks.loop(time=time_9am_est)
     async def free_analysis_task(self):
         channel = self.bot.get_channel(FREE_ANALYSIS_ID)
         if not channel: return
 
-        # Get next content from rotating library (Zero AI Cost)
+        # Rotación desde content_library.json
         content = self._get_next_content("free_analysis")
         if not content:
             print("Free Analysis skipped: No content available in library.")
@@ -1080,7 +1758,7 @@ class SentinelCog(commands.Cog):
             title_line = f"{emoji} {ttl}"
             embed = discord.Embed(
                 title="📡 Sentinel Briefing",
-                description="*One block from the public library—dense by design.*",
+                description="*Briefing snapshot—dense by design.*",
                 color=COLOR_FREE,
                 timestamp=discord.utils.utcnow()
             )
@@ -1115,6 +1793,105 @@ class SentinelCog(commands.Cog):
         except Exception as e:
             print(f"Error in Maintenance Task: {e}")
 
+    @tasks.loop(hours=6)
+    async def ai_usage_threshold_alert_task(self):
+        """Avisos al canal admin: suave (~65% del presupuesto) y crítico (~90%), una vez cada uno por día UTC."""
+        from core.ai_usage_metrics import (
+            mark_usage_critical_alert_sent,
+            mark_usage_soft_alert_sent,
+            today_tokens_and_cost,
+            today_usage_digest,
+            token_alert_limits,
+            usage_critical_alert_sent_for_today,
+            usage_soft_alert_sent_for_today,
+        )
+
+        budget, soft_lim, crit_lim = token_alert_limits()
+        if budget <= 0:
+            return
+
+        tokens, cost_usd = today_tokens_and_cost()
+        if tokens < soft_lim:
+            return
+
+        try:
+            cid = int(os.getenv("AI_USAGE_DISCORD_CHANNEL_ID", "0").strip() or "0")
+        except ValueError:
+            cid = 0
+        if not cid:
+            cid = LOG_CHANNEL_ID
+        channel = self.bot.get_channel(cid)
+        if not channel:
+            return
+
+        digest = today_usage_digest()
+        bp = digest.get("by_provider") or {}
+        pl = digest.get("polish_layers") or {}
+        prov_lines = "\n".join(
+            f"• **{k}**: llamadas **{v.get('calls', 0)}**, tokens ≈ **{v.get('tokens', 0):,}**"
+            for k, v in sorted(bp.items())
+        ) or "• (sin desglose aún)"
+        pg = int(pl.get("groq", 0) or 0)
+        pk = int(pl.get("grok", 0) or 0)
+        pz = int(pl.get("gemini", 0) or 0)
+        psum = pg + pk + pz
+        if psum:
+            polish_line = (
+                f"Pasadas de polish: Groq **{pg}** ({100 * pg // psum}%) · Grok **{pk}** ({100 * pk // psum}%) · "
+                f"Gemini **{pz}** ({100 * pz // psum}%)"
+            )
+        else:
+            polish_line = "Pasadas de polish: aún sin datos (capas `polish_layers` en JSON)."
+
+        base_desc = (
+            f"Presupuesto diario (referencia): **{budget:,}** tokens · Suave **{soft_lim:,}** · Crítico **{crit_lim:,}**\n"
+            f"Acumulado hoy: **{tokens:,}** · Coste estimado Grok (si aplica): **${cost_usd:.4f}**\n\n"
+            f"**Por proveedor**\n{prov_lines}\n\n{polish_line}"
+        )
+
+        try:
+            if tokens >= crit_lim and not usage_critical_alert_sent_for_today():
+                embed = discord.Embed(
+                    title="🔴 Uso de IA — crítico (día UTC)",
+                    description=base_desc,
+                    color=0xE74C3C,
+                    timestamp=discord.utils.utcnow(),
+                )
+                embed.set_footer(
+                    text="data/ai_usage_daily.json • AI_USAGE_TOKEN_ALERT_THRESHOLD • AI_USAGE_TOKEN_SOFT_PCT • AI_USAGE_TOKEN_CRITICAL_PCT"
+                )
+                await channel.send(embed=embed)
+                mark_usage_critical_alert_sent()
+                mark_usage_soft_alert_sent()
+                _log.info(
+                    "AI usage CRITICAL (UTC) | tokens=%s budget=%s | by_provider=%s | polish_layers=%s",
+                    tokens,
+                    budget,
+                    bp,
+                    pl,
+                )
+            elif tokens >= soft_lim and not usage_soft_alert_sent_for_today():
+                embed = discord.Embed(
+                    title="🟡 Uso de IA — aviso (día UTC)",
+                    description=base_desc,
+                    color=0xF1C40F,
+                    timestamp=discord.utils.utcnow(),
+                )
+                embed.set_footer(
+                    text="data/ai_usage_daily.json • AI_USAGE_TOKEN_ALERT_THRESHOLD • AI_USAGE_TOKEN_SOFT_PCT • AI_USAGE_TOKEN_CRITICAL_PCT"
+                )
+                await channel.send(embed=embed)
+                mark_usage_soft_alert_sent()
+                _log.info(
+                    "AI usage SOFT (UTC) | tokens=%s budget=%s | by_provider=%s | polish_layers=%s",
+                    tokens,
+                    budget,
+                    bp,
+                    pl,
+                )
+        except Exception as e:
+            print(f"ai_usage_threshold_alert_task: {e}")
+
     @tasks.loop(hours=4)
     async def major_signals_task(self):
         channel = self.bot.get_channel(MAJOR_SIGNALS_ID)
@@ -1125,20 +1902,36 @@ class SentinelCog(commands.Cog):
                 signal = await self.market_data.check_major_signals(symbol)
                 if signal:
                     color = 0x00ff00 if signal['type'] == "BULLISH" else 0xff0000
+                    if signal["type"] == "BULLISH":
+                        sesgo_line = "**Sesgo mayor:** 🟢 **Alcista**"
+                        matices = (
+                            "**Matices:** Un repunte de riesgo global o pérdida de soportes en timeframes "
+                            "superiores podría matizar el sesgo; lectura educativa 4h, sin señales de trading."
+                        )
+                    else:
+                        sesgo_line = "**Sesgo mayor:** 🔴 **Bajista**"
+                        matices = (
+                            "**Matices:** Sobreventa extrema o reversiones de flujo pueden suavizar la lectura; "
+                            "validar con datos propios — contenido educativo únicamente."
+                        )
                     embed = discord.Embed(
-                        title=f"🎯 CORE ANALYTICS: MAJOR SIGNAL [{symbol}]",
-                        description=f"Sentinel AI Core System ha detectado una confirmación macro-técnica sin uso dinámico de IA.\n\n**Señal:** {signal['type']}\n**Disparador:** {signal['reason']}",
+                        title=f"🎯 Major Signals • {symbol}",
+                        description=(
+                            f"{sesgo_line}\n\n"
+                            f"**Razón:** {signal['reason']}\n\n"
+                            f"{matices}"
+                        ),
                         color=color,
-                        timestamp=discord.utils.utcnow()
+                        timestamp=discord.utils.utcnow(),
                     )
-                    embed.set_footer(text="Sentinel AI • 4H Macro Monitor")
+                    embed.set_footer(text="Sentinel AI • 4H Macro Monitor • Solo educativo")
                     await channel.send(embed=embed)
             except Exception as e:
                 print(f"Error en major_signals_task para {symbol}: {e}")
 
     @tasks.loop(minutes=15)
     async def order_flow_tracker(self):
-        channel = self.bot.get_channel(ORDER_FLOWS_ID)
+        channel = self.bot.get_channel(VOLUME_SPIKES_ID)
         if not channel or not hasattr(self, 'market_data'): return
         
         try:
@@ -1151,7 +1944,7 @@ class SentinelCog(commands.Cog):
                     color=0x8200c9,
                     timestamp=discord.utils.utcnow()
                 )
-                embed.set_footer(text="Sentinel Flow Tracker • Zero AI Cost")
+                embed.set_footer(text="Sentinel Flow Tracker • Volume intelligence")
                 await channel.send(embed=embed)
         except Exception as e:
             print(f"Error en order_flow_tracker: {e}")
@@ -1493,7 +2286,7 @@ class DiscordBotClient(commands.Bot):
         print(f'✅ Sentinel AI System initialized as {self.user}')
 
     # El método send_alert se requiere por la tarea market_monitor de main.py
-    async def send_alert(self, symbol, price_action, sentiment_data, ai_insight=None):
+    async def send_alert(self, symbol, price_action, sentiment_data, ai_insight=None, second_read_note=None):
         channel = self.get_channel(self.channel_id)
         if channel:
             # print(f"🔔 Sending alert generated by main.py to {channel.name}...") 
@@ -1509,9 +2302,14 @@ class DiscordBotClient(commands.Bot):
             embed.add_field(name="24h Change", value=f"{price_action.get('change_pct', 0):+.2f}%", inline=True)
             
             if ai_insight:
-                embed.add_field(name="🧠 AI Insight (Sentinel Engine)", value=f"*{ai_insight}*", inline=False)
+                embed.add_field(name="🧠 Desk read", value=f"*{ai_insight}*", inline=False)
+            if second_read_note:
+                embed.add_field(name="⚡ Desk second read", value=second_read_note[:1024], inline=False)
             
-            embed.set_footer(text="Sentinel AI • Elite Analytics")
+            foot = "Sentinel AI • Elite Analytics"
+            if second_read_note:
+                foot += " • Second read on strong move"
+            embed.set_footer(text=foot)
             await channel.send(embed=embed)
             
             # --- TIER FREE: ALERTA CENSURADA (MAX 1 VEZ AL DÍA) ---

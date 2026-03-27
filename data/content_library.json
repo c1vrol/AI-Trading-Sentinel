@@ -4,217 +4,217 @@
             "id": 1,
             "emoji": "💧",
             "title": "Liquidity Pulse",
-            "content": "Global risk appetite still keys off real yields and USD funding stress. When DXY trends higher on rate repricing, crypto beta compresses—especially high-multiple alts. Watch stablecoin aggregate supply slope: persistent flat-to-down often coincides with reduced marginal bid in spot. Perp funding: sustained positive + elevated OI = crowded longs vulnerable to a volatility flush; negative funding with price holding structure can mean shorts paying for exit fuel. Tie it together: liquidity is not 'on/off'—it's the second derivative of who is forced to transact."
+            "content": "**BTC:**\n• Rising DXY and higher real yields crush risk appetite and compress price action.\n• Institutional flows slow sharply when USD funding conditions tighten.\n• Low 1-hour volume relative to average signals buyer exhaustion.\n\n**ETH:**\n• ETH suffers amplified downside as a high-beta asset during liquidity squeezes.\n• L2 activity becomes secondary when stablecoin supply flattens.\n\n**Stress-test / Invalidation:**\nIf DXY declines sharply while BTC spot volume surges more than 20% intraday, the bearish liquidity pressure is invalidated and a relief rally becomes likely."
         },
         {
             "id": 2,
             "emoji": "🧭",
             "title": "Cross-Asset Wiring",
-            "content": "Rates (UST 2y/10y), oil, and USDJPY often lead crypto reflexivity. Steepening on growth hope can lift beta; bear flattening on Fed hawkishness tends to punish duration-style crypto. Nikkei/USDJPY spikes sometimes signal carry unwind days—risk cuts flow fast. If equities rally on falling yields, crypto can lag; if equities ignore higher yields, crypto correlation to NQ can dominate. Build a simple checklist: yields up/down, credit stress (HY spreads), vol (VIX)—only trade size when your asset agrees with two of three."
+            "content": "**BTC:**\n• Bear flattening of the UST 2y/10y curve often precedes aggressive risk-off selling.\n• Rising 2-year yields during NY open frequently trigger immediate weakness.\n\n**ETH:**\n• ETH lags significantly when equities rally despite higher yields.\n• Price correlates heavily to NASDAQ when High Yield spreads widen.\n\n**Stress-test / Invalidation:**\nIf BTC breaks resistance with strong volume despite surging DXY and yields, the macro correlation has broken and a pure crypto-driven regime begins."
         },
         {
             "id": 3,
             "emoji": "⚡",
             "title": "Funding & Positioning",
-            "content": "Open interest alone lies; OI + price + funding tells a story. Rising OI + rising price + positive funding: trend supported but late-long risk. Falling price + rising OI + positive funding: potential liquidation cascade. Negative funding in a range: mean-reversion scalps, not automatic longs. Use OI resets after big moves as a clean slate—new trends often start when leverage has been washed."
+            "content": "**BTC:**\n• Rising price with rising OI and positive funding signals late-long risk.\n• Falling price with rising OI indicates building liquidation pressure.\n\n**ETH:**\n• Deep negative funding in a tight range often traps retail shorts and fuels violent squeezes.\n\n**Stress-test / Invalidation:**\nIf price continues lower despite deeply negative funding and declining OI, there is no trapped leverage left — it is genuine spot capitulation."
         },
         {
             "id": 4,
             "emoji": "🎯",
             "title": "BTC Structure Map",
-            "content": "Weekly trend vs daily mean-reversion fight here. Key conceptual zones (adjust to live tape): prior range highs as breakout support; failed breakdowns under a major low as liquidity engineering. VWAP clusters from prior impulse legs act as magnets intraday. If BTC loses a defended swing low with volume expansion, assume continuation until a reclaim with time (not one wick). Prefer reactions at HTF inefficiencies (FVG) over mid-air entries."
+            "content": "**BTC:**\n• Losing a defended swing low with volume expansion confirms trend continuation.\n• Prior weekly range highs flip to strong support during confirmed breakouts.\n\n**ETH:**\n• Price reacts more reliably to high-timeframe inefficiencies (FVGs) than random entries.\n• VWAP clusters from prior impulse legs act as strong intraday magnets.\n\n**Stress-test / Invalidation:**\nIf a broken swing low is immediately reclaimed with aggressive volume, the breakdown was a liquidity trap and a violent reversal is likely."
         },
         {
             "id": 5,
             "emoji": "🔷",
             "title": "ETH / L2 Beta",
-            "content": "ETH often trades as 'tech beta' to BTC when macro is calm and as a liquidity sponge when macro is stressed. Gas spikes and L2 activity can signal real usage legs; watch relative ETH/BTC for risk-on rotations. For alts, ETH strength is permission to hunt beta; ETH weakness is a warning to cut sleeves. Major upgrades are volatility events: direction matters less than having defined risk through the announcement window."
+            "content": "**BTC:**\n• Dominates capital flows and acts as the main liquidity sponge during risk-off events.\n\n**ETH:**\n• Rising ETH/BTC ratio gives permission to hunt higher-beta altcoins.\n• Major network upgrades create high-volatility windows where risk management is critical.\n\n**Stress-test / Invalidation:**\nIf ETH breaks down sharply against BTC despite successful upgrades and strong L2 activity, the beta thesis is broken."
         },
         {
             "id": 6,
             "emoji": "📉",
             "title": "Volatility Regimes",
-            "content": "Low realized vol compresses ranges then expands violently—classic vol-of-vol. In compression, fade extremes until proven; on expansion breakout, trade continuation only after acceptance (time above level). ATR expansion after a balance area is trend fuel; ATR collapse into news is a coiled spring. Size down when intraday range percentiles spike; size up only when your edge is structural, not adrenaline."
+            "content": "**BTC:**\n• ATR collapse before major news events often acts as a coiled spring for the next trend.\n• True breakouts require multiple 4H closes above the level, not just a wick.\n\n**ETH:**\n• High vol-of-vol frequently destroys tight stops during compression phases.\n• ATR expansion after a long balance area provides strong trend fuel.\n\n**Stress-test / Invalidation:**\nIf volatility spikes violently but immediately collapses back into the prior range, the expansion thesis fails and chop resumes."
         },
         {
             "id": 7,
             "emoji": "🏦",
             "title": "Policy & Data Week",
-            "content": "CPI/PPI, payrolls, FOMC dots, and speaker tours are convexity events. Pre-print: reduce leverage, widen stops or cut. Post-print: trade the path of maximum pain—often a stop-run then reversal, or a one-direction trend on genuine surprise. Don't marry the first 5 minutes; liquidity is thin and prints are noisy. Watch 2y yields for the 'true vote' on policy path."
+            "content": "**BTC:**\n• Major prints like CPI and FOMC typically trigger an initial stop-run before the real move.\n• The 2-year yield reaction post-print reveals the market’s true interpretation.\n\n**ETH:**\n• High beta makes holding positions through the print extremely risky.\n• Liquidity dries up sharply in the minutes before scheduled data.\n\n**Stress-test / Invalidation:**\nIf a major data surprise triggers an immediate unidirectional trend with no initial stop-run, fading the move becomes highly dangerous."
         },
         {
             "id": 8,
             "emoji": "🌊",
             "title": "On-Chain Flow Hints",
-            "content": "Exchange netflows are coarse but useful: persistent outflows during uptrends can signal accumulation; inflows into rallies can precede distribution. Whale wallet moves are narrative fuel—verify against price location (distribution near resistance matters more than random large transfers). Stablecoin mint/burn trends help frame global dry powder. Nothing on-chain replaces execution discipline; use it as context, not a buy button."
+            "content": "**BTC:**\n• Persistent exchange outflows during uptrends often signal institutional accumulation.\n• Large inflows during vertical rallies frequently precede distribution.\n\n**ETH:**\n• Whale transfers to exchanges near resistance zones indicate distribution risk.\n• Stablecoin mint/burn trends help gauge available global dry powder.\n\n**Stress-test / Invalidation:**\nIf massive inflows occur but price continues higher on strong spot volume, demand is absorbing all selling pressure."
         },
         {
             "id": 9,
             "emoji": "🔮",
             "title": "Scenario Grid",
-            "content": "Run three cases: base, risk-off shock, melt-up. Base: fade extremes inside range until HTF break. Shock: prioritize survival—cash is a position; wait for forced selling to clear. Melt-up: add only on pullbacks to broken resistance-turned-support. Assign rough probabilities weekly and cap risk when cases diverge (uncertainty tax). Good traders optimize for being roughly right with great risk, not perfectly right once."
+            "content": "**BTC:**\n• Holding cash is optimal during sudden risk-off shocks until forced selling clears.\n• Buy pullbacks strictly at broken resistance-turned-support during melt-up scenarios.\n\n**ETH:**\n• Fade extreme price deviations inside the established range until a higher timeframe break occurs.\n• Weekly probability shifts dictate your maximum risk cap.\n\n**Stress-test / Invalidation:**\nIf an unpriced systemic black swan occurs, the base-case scenario grid is immediately voided and capital preservation becomes the only objective."
         },
         {
             "id": 10,
             "emoji": "🧱",
             "title": "Order Flow Microstructure",
-            "content": "Large prints show intent; repeated absorption at a level shows defense. Iceberg and reload behavior near a price = institutional interest. Thin books amplify wicks—don't confuse stop-runs with invalidation. If aggressive buyers lift offers into resistance and it holds, that's supply; if they lift and it breaks with follow-through, that's initiation. Match timeframe: HFT noise on 1m ≠ swing thesis on 4H."
+            "content": "**BTC:**\n• Repeated aggressive absorption at a level confirms institutional defense.\n• Aggressive buyers lifting offers into resistance that holds signals hidden supply.\n\n**ETH:**\n• Iceberg and reload behavior near resistance indicates heavy hidden supply.\n• Thin books amplify wicks and create frequent fakeouts.\n\n**Stress-test / Invalidation:**\nIf aggressive buyers lift offers at resistance and price breaks cleanly with sustained volume, the supply thesis is crushed and a new trend initiates."
         },
         {
             "id": 11,
             "emoji": "📊",
             "title": "Breadth & Rotation",
-            "content": "When majors grind but mid-caps rip, it's beta rotation—not necessarily a bull market. When everything green on low volume, suspect short-covering. Leadership matters: if BTC dominance rises during a rally, capital is selective; if dominance falls, risk appetite is broad. Track failed leaders (coins that can't make new highs on BTC strength) as early exit tells."
+            "content": "**BTC:**\n• Rising BTC dominance during a rally shows capital is defensive and selective.\n• Broad risk appetite returns only when BTC dominance falls sharply.\n\n**ETH:**\n• ETH leads the rotation into altcoins when market breadth expands.\n• Failed leaders that cannot make new highs on BTC strength are early exit signals.\n\n**Stress-test / Invalidation:**\nIf the entire crypto board turns green on extremely low volume, the rotation is a fakeout driven by short-covering."
         },
         {
             "id": 12,
             "emoji": "🛡️",
             "title": "Risk Budgeting",
-            "content": "Risk per trade is the only dial you fully control. Rule of thumb: risk small on news, larger only on proven HTF structure. Correlation spikes in crashes—diversification fails when you need it; reduce gross exposure before stress, not during. Daily max loss stops the desk—literally walk away. Consistency beats hero trades; survival guarantees you see the next easy setup."
+            "content": "**BTC:**\n• Limit risk on news events and scale up only when higher-timeframe structure is clear.\n• Acts as the safest core holding when correlations spike toward 1.0.\n\n**ETH:**\n• Requires smaller position sizing due to higher volatility.\n• Daily maximum loss limits should physically force you off the screens.\n\n**Stress-test / Invalidation:**\nIf diversification fails during a severe liquidity crash, gross exposure must be reduced before stress, not during."
         },
         {
             "id": 13,
             "emoji": "🔥",
             "title": "Narrative Lifecycles",
-            "content": "Narratives (AI, RWA, memes) move in hype → saturation → consolidation. Enter on doubt with liquidity, exit into euphoria with volume. When social velocity peaks and funding goes silly, distribution risk rises. Pair narrative with charts: stories without structure are lottery tickets; structure without story can still pay (mean reversion)."
+            "content": "**BTC:**\n• Anchors the macro liquidity cycle and ignores micro-narratives.\n• Serves as the benchmark to measure if a narrative is truly outperforming.\n\n**ETH:**\n• Highly vulnerable to distribution when social velocity peaks and funding rates go parabolic.\n• Narrative tokens without chart structure become lottery tickets.\n\n**Stress-test / Invalidation:**\nIf a narrative token pumps violently on declining volume while BTC dumps, the divergence is unsustainable."
         },
         {
             "id": 14,
             "emoji": "⏱️",
             "title": "Session Playbook",
-            "content": "Asia often sets range, London tests it, NY expands or reverts. Local highs/lows from prior sessions are magnets. Don't fight the first hour after major macro unless you have a plan for gap risk. End-of-month and quarter flows create artificial trends—fade extremes only after the window passes. Know your sleep: trading Tokyo open from NYC is a different game—adjust size."
+            "content": "**BTC:**\n• Asia sets the initial range, London tests liquidity, and NY forces expansion or reversion.\n• Local highs and lows from prior sessions act as strong intraday magnets.\n\n**ETH:**\n• Highly sensitive to the NY equity open.\n• End-of-month flows create artificial trends that ignore technicals.\n\n**Stress-test / Invalidation:**\nIf a major geopolitical headline hits during the illiquid Asia session, all standard session rules are invalidated."
         },
         {
             "id": 15,
             "emoji": "🎲",
             "title": "Tail Risk Triggers",
-            "content": "Bank stress, sovereign CDS widening, sudden FX peg breaks, and commodity shocks propagate to crypto in hours. Correlation to NQ rises in fear. Keep a 'if this prints, I do X' list—decisions pre-made reduce panic clicks. Options skew and crash protection pricing can telegraph fear early; rising put demand without spot collapse can mean hedging, not prophecy."
+            "content": "**BTC:**\n• Banking stress and sudden FX peg breaks propagate to crypto in hours.\n• Correlation to NASDAQ spikes heavily during fear events.\n\n**ETH:**\n• Options skew and crash protection pricing telegraph institutional fear early.\n\n**Stress-test / Invalidation:**\nIf a major regional bank collapses but BTC rallies on high volume, the flight-to-safety narrative overrides standard risk-off correlation."
         },
         {
             "id": 16,
             "emoji": "💹",
             "title": "Perp Basis Edge Cases",
-            "content": "Contango/backwardation in perps vs spot hints carry and squeeze risk. Extreme basis during calm spot = leverage imbalance. During events, basis can invert wildly—arb desks step in late. If you don't arb, use basis only as a warning light for crowded leverage, not as a directional signal alone."
+            "content": "**BTC:**\n• Extreme contango during flat spot price action warns of leverage imbalance.\n• Basis inversion during volatility events signals late arbitrage action.\n\n**ETH:**\n• Use extreme basis only as a warning light for crowded leverage.\n\n**Stress-test / Invalidation:**\nIf spot price trends through an extreme basis dislocation without triggering liquidations, spot flow has overpowered the leverage trap."
         },
         {
             "id": 17,
             "emoji": "🧪",
             "title": "Backtest Honesty",
-            "content": "Edge decay is real: what worked in 2021 chop dies in 2024 trend. Sample size matters; one lucky regime isn't a strategy. Walk-forward and include fees, slippage, and failed fills. If the edge disappears without tight parameters, it's curve-fit. Prefer simple rules that survive parameter nudges over ornate genius that breaks live."
+            "content": "**BTC:**\n• Trend strategies that worked in 2021 fail completely in 2024 ranges.\n• Walk-forward testing must include realistic fees and slippage.\n\n**ETH:**\n• Simple structural rules survive regime shifts better than complex indicators.\n\n**Stress-test / Invalidation:**\nIf a historically profitable strategy suffers a 50% drawdown in live markets, the current regime has shifted and the edge is dead."
         },
         {
             "id": 18,
             "emoji": "📌",
             "title": "Levels That Matter",
-            "content": "A level matters if it changed behavior twice+. First touch is speculation; third reaction is data. Confluence beats single indicators: prior high + daily VWAP + option wall > random fib. Invalidate with time: a level broken and held for a full session hits harder than a 1m poke. Mark liquidity pools above/below obvious stops—price often visits them before the 'real' move."
+            "content": "**BTC:**\n• A level is only valid if it changes behavior at least twice.\n• The third reaction provides actionable data; the first is speculation.\n\n**ETH:**\n• Confluence of prior highs, VWAP, and option walls beats random lines.\n• Price often seeks liquidity pools slightly beyond obvious stops.\n\n**Stress-test / Invalidation:**\nIf a multi-touch level is broken and held for a full 4H session, the level is officially dead."
         },
         {
             "id": 19,
             "emoji": "🪙",
             "title": "Stablecoin Stress Signals",
-            "content": "Depeg rumors, redemption queues, and curve dislocations in stables = risk-off for all crypto. Flight to the largest stable names compresses alt liquidity. Watch on-chain swap slippage during stress—it's the real bid/ask when APIs lie. In calm markets, ignore stablecoin Twitter drama; in stressed markets, treat it as a circuit breaker."
+            "content": "**BTC:**\n• A major stablecoin depeg rumor triggers immediate risk-off selling.\n• BTC acts as the primary safe haven during stablecoin panics.\n\n**ETH:**\n• Liquidity evaporates rapidly as stable pools rebalance.\n• On-chain swap slippage reveals the true bid/ask during stress.\n\n**Stress-test / Invalidation:**\nIf a stablecoin depegs slightly but fiat on-ramps aggressively bid BTC, the panic is localized."
         },
         {
             "id": 20,
             "emoji": "🧠",
             "title": "Cognitive Traps",
-            "content": "Recency bias makes you overweight the last trade outcome. Confirmation bias makes you see patterns in noise. Loss aversion causes premature profit-taking and late loss-cutting. Journal triggers, not just PnL. Pre-define invalidation before entry—after you're in, your brain will negotiate against you. Automation and checklists beat willpower."
+            "content": "**BTC:**\n• Loss aversion delays cutting losing breakdown trades.\n• Confirmation bias makes you see bullish patterns in random noise.\n\n**ETH:**\n• Recency bias overweights your last volatile altcoin outcome.\n• Pre-define invalidation before entry to prevent emotional negotiation.\n\n**Stress-test / Invalidation:**\nIf you manually override a valid algorithmic stop based on gut feeling, your risk management is invalidated."
         },
         {
             "id": 21,
             "emoji": "📡",
             "title": "News Velocity",
-            "content": "Headlines move fast; order books move faster. If price doesn't confirm the story, the story is priced or false. Beware 'official' sources during weekends—thin books amplify fakeouts. Verify secondary sources on exchange incidents. Trade the reaction structure, not the morality of the headline."
+            "content": "**BTC:**\n• If price does not immediately confirm a bullish headline, the news is already priced in.\n• Trade the structural reaction, never the morality of the headline.\n\n**ETH:**\n• Thin weekend books amplify fakeouts from unverified news.\n• Verify secondary sources before reacting to exchange incidents.\n\n**Stress-test / Invalidation:**\nIf a catastrophic headline drops but price bounces off support with massive volume, the bottom is in."
         },
         {
             "id": 22,
             "emoji": "🔄",
             "title": "Mean Reversion vs Trend",
-            "content": "In ranges, sell rips, buy dips, reduce at mid. In trends, buy pullbacks to value areas, don't short strength without distribution signals. The expensive mistake is applying trend tools in chop and chop tools in trends. Use higher timeframe bias as a filter: if weekly is up, intraday shorts are scalps only unless major macro flips."
+            "content": "**BTC:**\n• Buy pullbacks in confirmed trends; sell rips in ranges.\n• Identify the regime before applying your strategy.\n\n**ETH:**\n• Mixing trend and range rules is how accounts bleed slowly.\n• Intraday shorts are scalps only if the weekly is bullish.\n\n**Stress-test / Invalidation:**\nIf price violently breaks the range and sustains above it, mean-reversion is dead and trend rules apply."
         },
         {
             "id": 23,
             "emoji": "🎚️",
             "title": "Sizing & Convexity",
-            "content": "Convex payoffs (options, alts) need smaller nominal size. Linear spot with tight stops can carry larger notional with same risk dollars. Adding on winners works in trends; averaging losers works in mean-reversion accounts—don't mix the models. After two consecutive losses, halve size until process is clean again."
+            "content": "**BTC:**\n• Linear spot with tight stops allows larger notional size with the same risk.\n• Adding to winners compounds edge in sustained trends.\n\n**ETH:**\n• Convex payoffs require significantly smaller nominal sizing.\n• Averaging losers only works in confirmed mean-reversion regimes.\n\n**Stress-test / Invalidation:**\nIf you size up a high-beta altcoin to match BTC spot size, a standard wick can trigger catastrophic drawdown."
         },
         {
             "id": 24,
             "emoji": "🌍",
             "title": "FX & Carry Spillovers",
-            "content": "Strong USD tightens financial conditions globally; EM stress can ripple to risk. EUR and CNH moves sometimes flag global liquidity shifts before crypto notices. If USD rips alongside yields, crypto often dual-shocks—don't anchor to single-cause stories. Watch DXY vs real yields divergence; divergences usually resolve in a violent joint move."
+            "content": "**BTC:**\n• A surging USD tightens global conditions and suppresses price action.\n• Divergences between DXY and real yields usually resolve violently.\n\n**ETH:**\n• Vulnerable to emerging market stress that ripples into risk assets.\n• EUR and CNH moves often flag liquidity shifts early.\n\n**Stress-test / Invalidation:**\nIf BTC ignores a massive DXY breakout and continues higher, it has decoupled from traditional FX drivers."
         },
         {
             "id": 25,
             "emoji": "📦",
             "title": "ETF & Passive Flows",
-            "content": "Spot ETF flows are one slice of demand, not the whole market. Sustained inflows on down days can signal accumulation; inflows on vertical rallies can chase. Compare flow magnitude to realized volume—context matters. Closed-end quirks and arb desks can create temporary premiums/discounts—usually mean-revert."
+            "content": "**BTC:**\n• Sustained ETF inflows on down days signal strong accumulation.\n• Compare flow magnitude to realized spot volume.\n\n**ETH:**\n• Follows BTC ETF narratives but with delayed beta.\n• Arbitrage desks close temporary premiums or discounts quickly.\n\n**Stress-test / Invalidation:**\nIf record ETF inflows occur at a local top, the flows were exit liquidity for smart money."
         },
         {
             "id": 26,
             "emoji": "🧷",
             "title": "Correlation Breaks",
-            "content": "When BTC–NASDAQ correlation drops, crypto may be driven by idiosyncratic catalysts (regulation, halving narratives, domino failures). Rising correlation in crashes means macro dashboard is boss. Track 30d rolling correlation weekly; regime shifts are opportunities to rotate strategy, not panic."
+            "content": "**BTC:**\n• When correlation to NASDAQ drops, BTC trades on idiosyncratic catalysts.\n• Rising correlation in crashes proves macro overrides all crypto charts.\n\n**ETH:**\n• Regulatory or protocol events can force complete decoupling from BTC.\n• Track 30-day rolling correlation to spot regime shifts.\n\n**Stress-test / Invalidation:**\nIf a crypto-specific regulatory ban occurs, BTC and ETH will crash independently of traditional markets."
         },
         {
             "id": 27,
             "emoji": "⚙️",
             "title": "Execution Quality",
-            "content": "Slippage eats small edges. Use limits in ranges, market only when speed matters more than price. Avoid major entries during the minute of CPI. Check per-exchange spread vs your size—what works for 0.1 BTC fails for 5. TWAP/VWAP algos for size; laddering reduces adverse selection."
+            "content": "**BTC:**\n• Use limit orders in ranges; market orders only when speed is critical.\n• Avoid major entries during the exact minute of CPI prints.\n\n**ETH:**\n• Slippage destroys small edges in high-frequency strategies.\n• Check per-exchange spread versus your trade size.\n\n**Stress-test / Invalidation:**\nIf you experience >1% slippage during normal hours, your execution routing is flawed."
         },
         {
             "id": 28,
             "emoji": "🕸️",
             "title": "DeFi Liquidity Cliffs",
-            "content": "TVL exits during stress can gap oracle-dependent pools. Stable pools aren't stable under regime change. Incentivized yields often mean mercenary capital—exit liquidity for insiders. Read audit age, admin keys, and oracle sources. If you wouldn't explain the risk to a friend in 60 seconds, size zero."
+            "content": "**BTC:**\n• Largely insulated from smart contract and oracle risks.\n\n**ETH:**\n• Directly exposed to oracle gaps and stable pool stress.\n• Incentivized yields attract mercenary capital that dumps quickly.\n\n**Stress-test / Invalidation:**\nIf a major DeFi protocol is hacked but ETH spot holds key support, the contagion has been siloed."
         },
         {
             "id": 29,
             "emoji": "📅",
             "title": "Halving & Cycle Myths",
-            "content": "Supply shocks matter, but marginal buyer/seller sets price. Narrative front-runs mechanics; post-event volatility often rises. Don't extrapolate past cycle maps blindly—liquidity structure changed with ETFs and macro linkage. Use cycle talk as sentiment gauge, not gospel."
+            "content": "**BTC:**\n• Narrative hype consistently front-runs the actual supply shock.\n• The marginal buyer and seller set the price, not just miner issuance.\n\n**ETH:**\n• Extrapolating past cycles ignores massive structural changes from ETFs.\n• Cycle talk is best used as a sentiment gauge.\n\n**Stress-test / Invalidation:**\nIf a global recession overlaps with the halving year, the expected supply shock pump will fail."
         },
         {
             "id": 30,
             "emoji": "🧩",
             "title": "Confluence Scoring",
-            "content": "Rate setups 1–5: trend alignment, key level, volume/vol confirmation, macro window clear, invalidation obvious. Trade A+ only at full size; B setups are reduced; C setups are journal-only. This simple gate beats indicator soup. If you can't score it, you don't understand it—skip."
+            "content": "**BTC:**\n• Rate setups 1–5 based on trend alignment, key level, volume, macro, and clear invalidation.\n• Trade A+ setups at full size; skip C setups entirely.\n\n**ETH:**\n• B-tier setups require reduced sizing; C-tier setups are journal-only.\n• A strict scoring system beats indicator soup.\n\n**Stress-test / Invalidation:**\nIf you execute a perfectly scored A+ setup but ignore a looming macro event, the technical confluence is invalidated."
         },
         {
             "id": 31,
             "emoji": "🚀",
             "title": "Momentum Quality",
-            "content": "Momentum on rising volume and expanding ranges sustains; momentum on falling volume often mean-reverts. Climactic candles need follow-through; without it, fade. Relative strength leaders in first hour of NY often persist intraday—weak leaders fade. Pair RS with broader market state—leader shorts fail in melt-ups."
+            "content": "**BTC:**\n• Momentum on rising volume and expanding ranges sustains the trend.\n• Momentum on falling volume is exhausted and prone to mean-reversion.\n\n**ETH:**\n• Climactic candles without follow-through are exhaustion traps.\n• Relative strength leaders in the first NY hour usually persist.\n\n**Stress-test / Invalidation:**\nIf a low-volume breakout suddenly gains massive institutional backing, the initial fakeout thesis is wrong."
         },
         {
             "id": 32,
             "emoji": "🔻",
             "title": "Drawdown Psychology",
-            "content": "From peak equity, humans increase risk to 'get back'—the path to ruin. After drawdown, return to min size until stats recover. Expectancy matters more than win rate. A 40% win rate with 3:1 R can dominate 70% win rate with 0.5:1 R. Track R-multiples, not bragging rights."
+            "content": "**BTC:**\n• Expectancy and R-multiples matter more than high win rate.\n• A 40% win rate with 3:1 R beats a 70% win rate with 0.5:1 R.\n\n**ETH:**\n• Increasing risk to recover a loss is the fastest path to ruin.\n• Return to minimum size until statistics recover.\n\n**Stress-test / Invalidation:**\nIf you abandon sizing rules to revenge-trade, a second loss will push the account past recovery."
         },
         {
             "id": 33,
             "emoji": "🧾",
             "title": "Tax & Reporting Hygiene",
-            "content": "Wash-sale nuances differ by jurisdiction; some treat crypto distinctly. Record timestamps, fees, and counterparty per trade—API exports break. Year-end forced selling for tax liabilities can create predictable pressure. This isn't tax advice—it's a reminder that after-tax alpha is the only alpha that buys groceries."
+            "content": "**BTC:**\n• Year-end forced selling creates predictable downward pressure.\n• Wash-sale rules differ by jurisdiction and can ruin net profit.\n\n**ETH:**\n• Staking and DeFi yields heavily complicate tax liabilities.\n• Record timestamps, fees, and counterparties manually.\n\n**Stress-test / Invalidation:**\nIf you execute a 50% gain but ignore short-term capital gains tax, your actual return is severely reduced."
         },
         {
             "id": 34,
             "emoji": "🔌",
             "title": "Infra & Exchange Risk",
-            "content": "API keys, withdrawal queues, and maintenance windows are operational risk. Split balances; assume exchange stress during volatility spikes. Proof-of-reserves is marketing unless you understand liabilities. Self-custody reduces counterparty risk but adds key risk—pick your poison consciously."
+            "content": "**BTC:**\n• Self-custody removes exchange risk but adds key management risk.\n• Proof-of-Reserves is marketing unless liabilities are fully detailed.\n\n**ETH:**\n• API failures and withdrawal queues are major operational risks.\n• Split balances across venues to survive isolated outages.\n\n**Stress-test / Invalidation:**\nIf a tier-1 exchange halts API access during volatility, your automated stops become useless."
         },
         {
             "id": 35,
             "emoji": "🎭",
             "title": "Social Layer Noise",
-            "content": "Follow smart accounts, not loud ones. Engagement farming correlates with bad calls. When everyone agrees, ask who is left to buy. Discord/telegram consensus peaks are contrarian hints at extremes—only act if price agrees. Curate inputs ruthlessly; information diet is edge."
+            "content": "**BTC:**\n• Consensus peaks in Discord or Telegram are reliable contrarian signals.\n• Curate inputs ruthlessly; a strict information diet is an edge.\n\n**ETH:**\n• High engagement farming correlates strongly with bad calls.\n• When everyone agrees, ask who is left to buy.\n\n**Stress-test / Invalidation:**\nIf retail consensus is correct and price continues higher, fading the crowd will result in fighting a sustained trend."
         },
         {
             "id": 36,
             "emoji": "🔭",
             "title": "Next Week's Tripwires",
-            "content": "Mark known prints, token unlocks, major court rulings, and protocol upgrades on a calendar. Rank them by historical asset sensitivity. Pre-plan: reduce, hedge, or accept gap risk. Surprise comes from the unscheduled—reserve mental bandwidth for black swans. Sleep > catching every wick."
+            "content": "**BTC:**\n• Rank scheduled prints by historical sensitivity and reduce leverage beforehand.\n• Pre-plan responses: reduce, hedge, or accept gap risk.\n\n**ETH:**\n• Mark token unlocks, court rulings, and protocol upgrades on a calendar.\n• Reserve mental bandwidth for true black swans.\n\n**Stress-test / Invalidation:**\nIf an unscheduled black swan hits, your planned tripwire calendar is useless and immediate risk reduction is required."
         }
     ],
     "free_analysis": [
@@ -222,98 +222,110 @@
             "id": 1,
             "emoji": "📘",
             "title": "Risk in One Line",
-            "content": "Never risk more than 1–2% of account equity on a single idea. Survival first—edges need time to compound.\n\n💡 /upgrade unlocks live AI scans and tighter analytics when you're ready to scale process."
+            "content": "Never risk more than 1–2% of your total account equity on any single trade.\n\nSurvival comes first — your edge needs time to compound."
         },
         {
             "id": 2,
             "emoji": "⚖️",
             "title": "R:R Without the Math Fog",
-            "content": "Target reward at least 2× your defined risk, or skip. If you can't find 2:1 with a clear invalidation, the setup isn't there.\n\n💡 Core/Quantum tiers add structure-level context so your R:R isn't guesswork."
+            "content": "Aim for at least 2:1 reward-to-risk on every setup.\n\nIf you can’t clearly see 2:1 with a logical invalidation, the trade isn’t worth taking."
         },
         {
             "id": 3,
             "emoji": "🧲",
             "title": "Why Liquidity Hunts Happen",
-            "content": "Price often wicks prior highs/lows to trigger stops before the real impulse. You're not paranoid—microstructure is predatory.\n\n💡 See how we map liquidity context with /upgrade."
+            "content": "Price frequently wicks past obvious highs and lows to trigger retail stops before the real move.\n\nThis is not random — it is how the market hunts liquidity."
         },
         {
             "id": 4,
             "emoji": "📐",
             "title": "Higher Timeframe Filter",
-            "content": "If daily bias disagrees with your 15m long, you're gambling. Align or reduce size until timeframes agree.\n\n💡 Daily bias channels + summaries ship to paid tiers—/upgrade for the full stack."
+            "content": "If your 15-minute trade goes against the daily bias, you are fighting the bigger trend.\n\nAlign timeframes or reduce size dramatically."
         },
         {
             "id": 5,
             "emoji": "🎢",
             "title": "RSI: Beyond 30/70",
-            "content": "Oversold can stay oversold in a crash; overbought can trend in a mania. Context > single prints.\n\n💡 Multi-indicator confluence is how Quantum scans are built—/upgrade to peek under the hood."
+            "content": "Oversold can stay oversold in strong downtrends.\nOverbought can stay overbought in strong uptrends.\n\nContext always beats a single number."
         },
         {
             "id": 6,
             "emoji": "📦",
             "title": "Volume Tells the Truth",
-            "content": "Breakouts on weak volume invite fakeouts. Real moves usually show participation—watch relative volume, not just color of candles.\n\n💡 Volume spike monitoring is a premium lane—/upgrade."
+            "content": "Breakouts on weak volume are usually fakeouts.\nReal moves show strong participation.\n\nAlways compare volume to recent averages."
         },
         {
             "id": 7,
             "emoji": "🪤",
             "title": "Stop Placement Basics",
-            "content": "Stops belong beyond structure, not at round numbers everyone sees. Tighter isn't smarter if you're noise-stopped every hour.\n\n💡 Institutional-style level work lives behind /upgrade."
+            "content": "Place stops beyond structure, never at obvious round numbers.\n\nTighter stops are not smarter if they get hit by normal noise."
         },
         {
             "id": 8,
             "emoji": "🧭",
             "title": "Plan the Trade",
-            "content": "Write entry, invalidation, targets before you click. If you won't write it, you won't respect it.\n\n💡 Tools won't replace discipline, but /upgrade gives you cleaner inputs to plan with."
+            "content": "Write your entry, invalidation, and target before you click.\n\nIf you won’t write the plan, you won’t respect it when the trade moves against you."
         },
         {
             "id": 9,
             "emoji": "🌗",
             "title": "Trend vs Range Mode",
-            "content": "Different games: ranges reward fades; trends reward pullbacks. Mixing rules is how accounts die quietly.\n\n💡 Bias + signal channels help you tag the regime faster—/upgrade."
+            "content": "Different market regimes require different rules.\nRanges reward fades. Trends reward pullbacks.\n\nMixing the two is how accounts die slowly."
         },
         {
             "id": 10,
             "emoji": "🔕",
             "title": "Noise Control",
-            "content": "Most chart hours are worthless. Trade your windows; log the rest. Constant clicking isn't 'hard work.'\n\n💡 Let automation filter noise—explore tiers via /upgrade."
+            "content": "Most chart hours offer zero edge.\n\nTrade only your high-probability windows and ignore the rest."
         },
         {
             "id": 11,
             "emoji": "💸",
             "title": "Fees Are Friction",
-            "content": "If you need 0.3% to break even, scalping the chop taxes you to death. Know your all-in cost per round trip.\n\n💡 Better timing beats more trades—premium analytics help /upgrade."
+            "content": "If your strategy needs 0.3% just to break even, scalping is mathematical suicide.\n\nKnow your exact round-trip cost before trading."
         },
         {
             "id": 12,
             "emoji": "🧱",
             "title": "Support/Resistance That Sticks",
-            "content": "Levels confirmed by multiple touches and volume matter; arbitrary lines don't.\n\n💡 Liquidity maps and /levels (paid) turn squiggles into a plan."
+            "content": "A level only matters if it has been respected multiple times with volume.\n\nArbitrary lines drawn on a chart mean nothing."
         },
         {
             "id": 13,
             "emoji": "🧨",
             "title": "Leverage Is Optional",
-            "content": "1× with a plan beats 10× with hope. Leverage multiplies mistakes, not IQ.\n\n💡 If you want signal quality over adrenaline, check /upgrade."
+            "content": "1× with a solid plan beats 10× with hope.\n\nLeverage multiplies mistakes, not intelligence."
         },
         {
             "id": 14,
             "emoji": "📝",
             "title": "Journal One Thing",
-            "content": "After each trade, log: reason, emotion (1–5), result. Patterns emerge fast—usually about you, not the market.\n\n💡 Pair journaling with better data—/upgrade when you want the full toolkit."
+            "content": "After every trade, log your reason, your emotion, and the result.\n\nPatterns about your psychology appear faster than you expect."
         },
         {
             "id": 15,
             "emoji": "🛰️",
             "title": "What Premium Actually Buys",
-            "content": "Not promises—timely context: bias, validated signals, deeper coverage, and less time decoding noise.\n\n💡 /upgrade shows current tiers and access—grab what fits your process."
+            "content": "Premium is not about promises.\nIt is about timely context, validated signals, deeper coverage, and less time decoding noise."
         }
     ],
     "rotation_state": {
         "informative_blocks_recent_ids": [
-            31,
-            6,
-            5
+            20,
+            35,
+            1,
+            36,
+            3,
+            25,
+            12,
+            28,
+            29,
+            10,
+            32,
+            21,
+            8,
+            11,
+            7
         ],
         "free_analysis_recent_block_ids": []
     }
