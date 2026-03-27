@@ -9,6 +9,7 @@ import os
 import json
 import time
 import io
+import urllib.parse
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
 import aiohttp
 import psutil
@@ -105,6 +106,100 @@ class SentinelCog(commands.Cog):
         from core.market_data import MarketData
         self.market_data = MarketData(exchange_id="kraken")
 
+        # Registro de Performance Persistente
+        self.perf_log_path = os.path.join(os.path.dirname(__file__), "..", "data", "performance_log.json")
+        
+        # Tier-based Coin Access Configuration
+        self.COIN_ACCESS = {
+            "FREE": ["BTC", "ETH"],
+            "CORE": ["BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "MATIC", "NEAR", "AVAX", "LINK", "INJ"],
+            "QUANTUM": ["BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "MATIC", "NEAR", "AVAX", "LINK", "INJ", "STX", "FET", "TAO", "RENDER", "FIL", "ICP", "ARB", "OP"]
+        }
+        
+        # Content Library for Deep Dive & Free Analysis rotation
+        self.content_library_path = os.path.join(os.path.dirname(__file__), "..", "data", "content_library.json")
+
+    DEEP_DIVE_TAGLINES = [
+        "Three dense reads—liquidity, structure, and what could actually move price.",
+        "No fluff: funding, levels, and the calendar risks worth respecting.",
+        "A fast pass across flow, key zones, and the week’s tripwires.",
+        "Tape-first notes: where balance-sheet money hides and where stops cluster.",
+        "Cross-asset context in three slices—read once, trade calmer.",
+    ]
+    # Last N VIP deep-dive embeds (3 blocks each) must use disjoint block IDs — feels organic in chat.
+    DEEP_DIVE_EMBED_HISTORY = 5
+    DEEP_DIVE_RECENT_BLOCK_CAP = DEEP_DIVE_EMBED_HISTORY * 3
+    # Free channel: last N single-block embeds must not repeat the same block id when avoidable.
+    FREE_ANALYSIS_EMBED_HISTORY = 5
+
+    def _get_next_informative_triplet(self) -> list[dict] | None:
+        """Picks 3 blocks not used in the last 5 embeds (15 IDs), so nothing repeats across that window."""
+        try:
+            with open(self.content_library_path, "r", encoding="utf-8") as f:
+                library = json.load(f)
+        except Exception:
+            return None
+        blocks = library.get("informative_blocks", [])
+        n = len(blocks)
+        if n < 3:
+            return None
+        state = library.setdefault("rotation_state", {})
+        raw_recent = state.get("informative_blocks_recent_ids", [])
+        recent: list = list(raw_recent) if isinstance(raw_recent, list) else []
+
+        def trio_avoiding(banned_ids: set) -> list[dict] | None:
+            candidates = [b for b in blocks if b.get("id") not in banned_ids]
+            if len(candidates) >= 3:
+                return random.sample(candidates, 3)
+            return None
+
+        banned = set(recent)
+        trio = trio_avoiding(banned)
+        if trio is None and len(recent) > 9:
+            trio = trio_avoiding(set(recent[-9:]))
+        if trio is None and len(recent) > 3:
+            trio = trio_avoiding(set(recent[-3:]))
+        if trio is None:
+            trio = random.sample(blocks, 3)
+
+        new_ids = [b["id"] for b in trio]
+        recent.extend(new_ids)
+        if len(recent) > self.DEEP_DIVE_RECENT_BLOCK_CAP:
+            recent = recent[-self.DEEP_DIVE_RECENT_BLOCK_CAP :]
+        state["informative_blocks_recent_ids"] = recent
+        library["rotation_state"] = state
+        with open(self.content_library_path, "w", encoding="utf-8") as f:
+            json.dump(library, f, indent=4, ensure_ascii=False)
+        return trio
+
+    def _get_next_content(self, category: str) -> dict | None:
+        """Free analysis: pick a block not used in the last 5 embeds (when the pool allows)."""
+        if category != "free_analysis":
+            return None
+        try:
+            with open(self.content_library_path, "r", encoding="utf-8") as f:
+                library = json.load(f)
+        except Exception:
+            return None
+        items = library.get("free_analysis", [])
+        if not items:
+            return None
+        state = library.setdefault("rotation_state", {})
+        raw = state.get("free_analysis_recent_block_ids", [])
+        recent: list = list(raw) if isinstance(raw, list) else []
+        cap = self.FREE_ANALYSIS_EMBED_HISTORY
+        banned = set(recent[-cap:])
+        candidates = [x for x in items if x.get("id") not in banned]
+        if not candidates:
+            candidates = list(items)
+        selected = random.choice(candidates)
+        recent.append(selected["id"])
+        state["free_analysis_recent_block_ids"] = recent[-cap:]
+        library["rotation_state"] = state
+        with open(self.content_library_path, "w", encoding="utf-8") as f:
+            json.dump(library, f, indent=4, ensure_ascii=False)
+        return selected
+
     def _check_ai_quota(self, reservation: bool = False) -> bool:
         """Protects the daily 100-req limit. 
         Limits: User (30 max), System/VIP overrides (90 hardcap).
@@ -199,6 +294,7 @@ class SentinelCog(commands.Cog):
         if not self.major_signals_task.is_running(): self.major_signals_task.start()
         if not self.order_flow_tracker.is_running(): self.order_flow_tracker.start()
         if not self.quantum_signals_task.is_running(): self.quantum_signals_task.start()
+        if not self.weekly_performance_report.is_running(): self.weekly_performance_report.start()
         
         # Link global tree error handler
         self.bot.tree.on_error = self.on_app_command_error
@@ -380,33 +476,51 @@ class SentinelCog(commands.Cog):
         self.major_signals_task.cancel()
         self.order_flow_tracker.cancel()
         self.quantum_signals_task.cancel()
+        self.weekly_performance_report.cancel()
         if hasattr(self, 'market_data'):
             await self.market_data.close_connection()
 
     @app_commands.command(name="price", description="Check real-time simulated price.")
     @app_commands.describe(coin="Select the cryptocurrency")
     @app_commands.checks.dynamic_cooldown(market_cooldown_logic)
-    @app_commands.checks.has_any_role(ROLE_CORE, ROLE_QUANTUM, ROLE_LIFETIME)
-    async def cmd_price(self, interaction: discord.Interaction, coin: Literal["BTC", "ETH", "SOL", "XRP", "ADA"]):
+    async def cmd_price(self, interaction: discord.Interaction, coin: Literal["BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "MATIC", "NEAR", "AVAX", "LINK", "INJ", "STX", "FET", "TAO", "RENDER", "FIL", "ICP", "ARB", "OP"]):
+        if not await self._check_coin_access(interaction, coin):
+            return
+
         mock_price = f"${random.uniform(50, 80000):,.2f}"
-        embed = discord.Embed(title=f"📈 Current Price for **{coin.upper()}**", description=f"Detected Value: `{mock_price}`", color=COLOR_FREE)
-        embed.set_footer(text="💡 Tip: Access /ai_scan for fundamental analysis today.")
+        
+        user_roles = [r.id for r in interaction.user.roles]
+        is_quantum = any(r in [ROLE_QUANTUM, ROLE_LIFETIME, 1486476439044755497, 1486476426419900466] for r in user_roles)
+        is_core = any(r in [ROLE_CORE, 1486476406018936953] for r in user_roles)
+        color = COLOR_QUANTUM if is_quantum else COLOR_CORE if is_core else COLOR_FREE
+        
+        embed = discord.Embed(
+            title=f"📊 Market Price: {coin.upper()}",
+            description=f"The current price for **{coin.upper()}/USDT** is approximately **{mock_price}**.",
+            color=color,
+            timestamp=discord.utils.utcnow()
+        )
+        embed.set_footer(text="Sentinel AI • Live Data Simulation")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="feargreed", description="Show current market sentiment.")
     @app_commands.checks.dynamic_cooldown(market_cooldown_logic)
-    @app_commands.checks.has_any_role(ROLE_CORE, ROLE_QUANTUM, ROLE_LIFETIME)
     async def cmd_feargreed(self, interaction: discord.Interaction):
         fgi = random.randint(10, 90)
         status = "Extreme Fear" if fgi < 25 else "Fear" if fgi < 45 else "Neutral" if fgi < 55 else "Greed" if fgi < 75 else "Extreme Greed"
         
-        embed = discord.Embed(title="🧭 Fear & Greed Index", description=f"**{fgi}/100** - {status}\n\n*Macro volume remains stable.*", color=COLOR_CORE)
-        embed.set_footer(text="💡 Tip: Access /ai_scan for fundamental analysis today.")
+        user_roles = [r.id for r in interaction.user.roles]
+        is_quantum = any(r in [ROLE_QUANTUM, ROLE_LIFETIME, 1486476439044755497, 1486476426419900466] for r in user_roles)
+        is_core = any(r in [ROLE_CORE, 1486476406018936953] for r in user_roles)
+        color = COLOR_QUANTUM if is_quantum else COLOR_CORE if is_core else COLOR_FREE
+
+        embed = discord.Embed(title="🧭 Fear & Greed Index", description=f"**{fgi}/100** - {status}\n\n*Macro volume remains stable.*", color=color)
+        embed.set_footer(text="Market Psychology Analytics")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="upgrade", description="Info on how to get Premium Tiers: Core and Quantum.")
     async def cmd_upgrade(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
         
         # Log the upgrade command usage
         log_channel = self.bot.get_channel(UPGRADE_LOG_ID)
@@ -433,9 +547,9 @@ class SentinelCog(commands.Cog):
             
             # Reenviar el contenido y los embeds del mensaje original
             if msg.embeds:
-                await interaction.followup.send(content=msg.content if msg.content else None, embeds=msg.embeds, ephemeral=False)
+                await interaction.followup.send(content=msg.content if msg.content else None, embeds=msg.embeds, ephemeral=True)
             else:
-                await interaction.followup.send(content=msg.content if msg.content else "No information available.", ephemeral=False)
+                await interaction.followup.send(content=msg.content if msg.content else "No information available.", ephemeral=True)
                 
         except Exception as e:
             # Fallback en caso de error (canal no visible o mensaje borrado)
@@ -444,29 +558,42 @@ class SentinelCog(commands.Cog):
                 description="Please visit the official subscription channel to view current tiers and pricing.",
                 color=COLOR_CORE
             )
-            await interaction.followup.send(embed=fallback_embed, ephemeral=False)
+            await interaction.followup.send(embed=fallback_embed, ephemeral=True)
             await self.log_system_error("Upgrade Fetch Failure", f"Could not fetch message {UPGRADE_MESSAGE_ID} in {UPGRADE_CHANNEL_ID}: {e}")
 
     @app_commands.command(name="levels", description="Show technical support and resistance levels for the day.")
     @app_commands.describe(coin="Select the cryptocurrency to view its levels")
     @app_commands.checks.has_any_role(ROLE_CORE, ROLE_QUANTUM, ROLE_LIFETIME)
-    async def cmd_levels(self, interaction: discord.Interaction, coin: Literal["BTC", "ETH", "SOL", "XRP", "ADA"]):
-        embed = discord.Embed(title=f"🧱 Liquidity Map for {coin.upper()}", color=COLOR_CORE)
+    async def cmd_levels(self, interaction: discord.Interaction, coin: Literal["BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "MATIC", "NEAR", "AVAX", "LINK", "INJ", "STX", "FET", "TAO", "RENDER", "FIL", "ICP", "ARB", "OP"]):
+        if not await self._check_coin_access(interaction, coin):
+            return
+
+        user_roles = [r.id for r in interaction.user.roles]
+        is_quantum = any(r in [ROLE_QUANTUM, ROLE_LIFETIME, 1486476439044755497, 1486476426419900466] for r in user_roles)
+        color = COLOR_QUANTUM if is_quantum else COLOR_CORE
+
+        embed = discord.Embed(title=f"🧱 Liquidity Map for {coin.upper()}", color=color)
         embed.add_field(name="H4 Resistance", value="🔴 Wall detected", inline=True)
         embed.add_field(name="Weekly VWAP", value="🟡 Equilibrium", inline=True)
         embed.add_field(name="Daily Support", value="🟢 Absorption", inline=True)
-        embed.set_footer(text="💡 Tip: Access /ai_scan for fundamental analysis today.")
+        embed.set_footer(text="Sentinel AI • Order Flow Intelligence")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="ai_scan", description="Deep analysis. [Quantum Exclusive]")
     @app_commands.describe(coin="Select the cryptocurrency to scan")
     @app_commands.checks.has_any_role(ROLE_QUANTUM, ROLE_LIFETIME)
-    async def cmd_ai_scan(self, interaction: discord.Interaction, coin: Literal["BTC", "ETH", "SOL", "AVAX", "LINK", "INJ"]):
+    async def cmd_ai_scan(self, interaction: discord.Interaction, coin: Literal["BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "MATIC", "NEAR", "AVAX", "LINK", "INJ", "STX", "FET", "TAO", "RENDER", "FIL", "ICP", "ARB", "OP"]):
         await interaction.response.defer(thinking=True, ephemeral=True)
         
-        # QUANTUM/LIFETIME EXCLUSIVE ACCESS CHECK
-        if not any(r.id in [ROLE_QUANTUM, ROLE_LIFETIME] for r in interaction.user.roles):
-            await interaction.followup.send("🔒 **Acceso Denegado:** `/ai_scan` ahora es EXCLUSIVO del Plan Quantum para proteger las cuotas de IA. Por favor realiza un `/upgrade`.", ephemeral=True)
+        # QUANTUM/LIFETIME EXCLUSIVE ACCESS CHECK (Extra layer for upsell)
+        user_roles = [r.id for r in interaction.user.roles]
+        if not any(r in [ROLE_QUANTUM, ROLE_LIFETIME, 1486476439044755497, 1486476426419900466] for r in user_roles):
+            embed = discord.Embed(
+                title="🔒 Access Denied",
+                description="This deep scanning feature is exclusive to **Sentinel Quantum** members. Upgrade now to unlock full AI depth.",
+                color=0xff0000
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
         if not self.ai_engine:
@@ -532,10 +659,11 @@ class SentinelCog(commands.Cog):
                 if not resp_data:
                     raise Exception("Empty Content")
                     
-                embed = discord.Embed(title="🏦 Sentinel Macro Deep Dive (Offline Cache)", description="Reporte Institucional Semanal recuperado de la caché HFT.", color=COLOR_QUANTUM)
-                self._add_safe_field(embed, "💧 Liquidity State", resp_data.get('liquidity', 'N/A'), inline=False, format_type="quote")
-                self._add_safe_field(embed, "🎯 Critical Zones", resp_data.get('critical_zones', 'N/A'), inline=False, format_type="quote")
-                self._add_safe_field(embed, "🔮 Weekly Projection", resp_data.get('weekly_projection', 'N/A'), inline=False, format_type="quote")
+                tag = random.choice(self.DEEP_DIVE_TAGLINES)
+                embed = discord.Embed(title="🏛️ Sentinel Macro Deep Dive (Cache)", description=tag, color=COLOR_QUANTUM)
+                self._add_safe_field(embed, "💧 Liquidity State", resp_data.get('liquidity', 'N/A'), inline=False, format_type="code")
+                self._add_safe_field(embed, "🎯 Critical Zones", resp_data.get('critical_zones', 'N/A'), inline=False, format_type="code")
+                self._add_safe_field(embed, "🔮 Weekly Projection", resp_data.get('weekly_projection', 'N/A'), inline=False, format_type="code")
                 embed.set_footer(text="Premium Quantum Level • Zero Cost Access")
                 
                 await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -651,9 +779,141 @@ class SentinelCog(commands.Cog):
             
         try:
             await wins_channel.send(embed=embed)
+            
+            # Persist for Performance Stats
+            await self._record_performance(result, description[:50])
+            
             await interaction.followup.send("✅ Track record logged successfully.", ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to log track record: {e}", ephemeral=True)
+
+    async def _check_coin_access(self, interaction: discord.Interaction, coin: str) -> bool:
+        """Verifies if the user has the required Tier role for the requested coin."""
+        user_roles = [r.id for r in interaction.user.roles]
+        
+        # Check Roles (Internal + External Fallbacks)
+        is_quantum = any(r in [ROLE_QUANTUM, ROLE_LIFETIME, 1486476439044755497, 1486476426419900466] for r in user_roles)
+        is_core = any(r in [ROLE_CORE, 1486476406018936953] for r in user_roles)
+        
+        # Determine User Tier
+        tier = "FREE"
+        if is_quantum: tier = "QUANTUM"
+        elif is_core: tier = "CORE"
+        
+        # Allowed Coins for User Tier
+        allowed = self.COIN_ACCESS.get(tier, ["BTC", "ETH"])
+        
+        if coin.upper() in allowed:
+            return True
+            
+        # Access Denied: Suggest Upgrade
+        if coin.upper() in self.COIN_ACCESS["CORE"]:
+            required_tier = "Core"
+        else:
+            required_tier = "Quantum"
+            
+        embed = discord.Embed(
+            title="🔒 Access Restricted",
+            description=f"Monitoring for **{coin.upper()}** is exclusive to **{required_tier}** members.\n\nPlease upgrade your tier in <#{UPGRADE_CHANNEL_ID}> to unlock institutional data for this asset.",
+            color=0xff0000
+        )
+        embed.set_footer(text="Sentinel AI • Privilege Verification")
+        
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        return False
+
+    async def _record_performance(self, result: str, details: str):
+        """Helper to store win/loss history for overall performance charts."""
+        os.makedirs(os.path.dirname(self.perf_log_path), exist_ok=True)
+        history = []
+        if os.path.exists(self.perf_log_path):
+            with open(self.perf_log_path, "r", encoding="utf-8") as f:
+                try: history = json.load(f)
+                except: pass
+        
+        history.append({
+            "timestamp": str(datetime.datetime.now()),
+            "result": "Win" if "Win" in result else "Loss" if "Loss" in result else "Neut",
+            "details": details
+        })
+        
+        # Keep last 100 records for performance metrics
+        if len(history) > 100: history = history[-100:]
+        
+        with open(self.perf_log_path, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=4)
+
+    @app_commands.command(name="performance", description="View the overall Sentinel AI Track Record chart.")
+    async def cmd_performance(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        chart_url = await self._generate_total_performance_chart()
+        if not chart_url:
+            await interaction.followup.send("📊 No performance data available yet. Stay tuned for the next hits.")
+            return
+
+        embed = discord.Embed(
+            title="🎯 Sentinel AI Performance: Track Record",
+            description="Gráfica acumulada de aciertos y tasa de éxito institucional.",
+            color=COLOR_QUANTUM,
+            timestamp=discord.utils.utcnow()
+        )
+        embed.set_image(url=chart_url)
+        embed.set_footer(text="Verified Performance • Sentinel Intelligence Grid")
+        await interaction.followup.send(embed=embed)
+
+    async def _generate_total_performance_chart(self) -> str | None:
+        """Generates a premium area chart showing cumulative hits (Win Rate)."""
+        if not os.path.exists(self.perf_log_path):
+            return None
+            
+        with open(self.perf_log_path, "r", encoding="utf-8") as f:
+            try: history = json.load(f)
+            except: return None
+            
+        if not history: return None
+        
+        # Aggregate Win/Loss by index for an equity-style curve
+        cumulative_hits = []
+        current_sum = 0
+        for entry in history:
+            if entry["result"] == "Win":
+                current_sum += 1
+            cumulative_hits.append(current_sum)
+            
+        labels = [str(i+1) for i in range(len(cumulative_hits))]
+        
+        chart_config = {
+            "type": "line",
+            "data": {
+                "labels": labels,
+                "datasets": [{
+                    "label": "Cumulative Profits/Wins",
+                    "data": cumulative_hits,
+                    "borderColor": "rgb(0, 255, 127)",
+                    "backgroundColor": "rgba(0, 255, 127, 0.1)",
+                    "borderWidth": 3,
+                    "pointRadius": 0,
+                    "fill": True,
+                    "tension": 0.4
+                }]
+            },
+            "options": {
+                "title": {"display": True, "text": "INSTITUTIONAL PERFORMANCE GRID", "fontColor": "#ffffff", "fontSize": 14},
+                "legend": {"display": False},
+                "scales": {
+                    "yAxes": [{"gridLines": {"color": "rgba(255, 255, 255, 0.05)"}, "ticks": {"fontColor": "#888"}}],
+                    "xAxes": [{"display": False}]
+                }
+            }
+        }
+        
+        import urllib.parse
+        encoded = urllib.parse.quote(json.dumps(chart_config))
+        return f"https://quickchart.io/chart?c={encoded}&w=500&h=300&bkg=%230a0f1e"
 
     @app_commands.command(name="clear", description="[ADMIN] Deletes a specific amount of messages.")
     @app_commands.describe(amount="Number of messages to delete")
@@ -731,33 +991,38 @@ class SentinelCog(commands.Cog):
         self._force_run = False
         
         channel = self.bot.get_channel(AI_DEEP_DIVE_ID)
-        if not channel or not self.ai_engine: return
+        if not channel: return
 
-        # System Quota check (reservation=True)
-        if not self._check_ai_quota(reservation=True):
-            print("Deep Dive skipped: No AI quota remaining.")
+        trio = self._get_next_informative_triplet()
+        if not trio:
+            print("Deep Dive skipped: informative_blocks needs at least 3 entries.")
             return
 
         try:
-            prompt = 'Generate a hedge fund style weekly macro deep dive for crypto (Liquidity, Critical Zones, Weekly Projection). Return ONLY strict JSON: {"liquidity":"...", "critical_zones":"...", "weekly_projection":"..."}. Keep each section of the JSON response under 800 characters to ensure compatibility with Discord Embed limits.'
-            # USAR Misión SYSTEM_LOOP (Clave 5)
-            response = await self.ai_engine.generate_response(
-                prompt=prompt,
-                mission="SYSTEM_LOOP",
-                response_mime_type="application/json"
+            tag = random.choice(self.DEEP_DIVE_TAGLINES)
+            embed = discord.Embed(
+                title="🏛️ Sentinel Macro Deep Dive",
+                description=tag,
+                color=COLOR_QUANTUM,
+                timestamp=discord.utils.utcnow()
             )
-            resp_data = json.loads(str(response.text))
-            self._save_global_cache("quantum_deep_dive", json.dumps(resp_data))
-            
-            embed = discord.Embed(title="🏦 Sentinel Macro Deep Dive", description="Reporte Institucional Semanal", color=COLOR_QUANTUM, timestamp=discord.utils.utcnow())
-            self._add_safe_field(embed, "💧 Liquidity State", resp_data.get('liquidity', 'N/A'), inline=False, format_type="code")
-            self._add_safe_field(embed, "🎯 Critical Zones", resp_data.get('critical_zones', 'N/A'), inline=False, format_type="code")
-            self._add_safe_field(embed, "🔮 Weekly Projection", resp_data.get('weekly_projection', 'N/A'), inline=False, format_type="code")
-            embed.set_footer(text="Quantum Hedge Fund Analytics • Key 5")
-            
+            for b in trio:
+                emoji = b.get("emoji", "▫️")
+                title = b.get("title", "Note")
+                body = b.get("content", "N/A")
+                field_name = f"{emoji} **{title}**"
+                self._add_safe_field(embed, field_name, body, inline=False, format_type="code")
+            ids = ", ".join(str(b.get("id", "?")) for b in trio)
+            nblk = 0
+            try:
+                with open(self.content_library_path, "r", encoding="utf-8") as f:
+                    nblk = len(json.load(f).get("informative_blocks", []))
+            except Exception:
+                pass
+            embed.set_footer(text=f"Quantum Hedge Fund Analytics • blocks [{ids}] • pool {nblk}")
             await channel.send(embed=embed)
         except Exception as e:
-            print(f"Weekly Task Error: {e}")
+            print(f"Deep Dive Content Error: {e}")
             await self.log_system_error("Deep Dive Failure", str(e))
 
     @tasks.loop(minutes=15)
@@ -800,31 +1065,36 @@ class SentinelCog(commands.Cog):
     @tasks.loop(time=time_9am_est)
     async def free_analysis_task(self):
         channel = self.bot.get_channel(FREE_ANALYSIS_ID)
-        if channel:
-            # 1. Seleccionar snippet educativo
-            snippet = random.choice(self.educational_snippets)
-            
-            # 2. Recuperar el daily bias cacheados de los usuarios Core
-            try:
-                with open(self.global_cache_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    daily_bias_text = data.get("daily_bias", "Mercado en consolidación buscando definir una dirección.")
-            except:
-                daily_bias_text = "Mercado estable a la espera de confirmación de volumen direccional."
-            
-            # 3. Formatear la versión Free: Solo tomar la apertura (ej. primeras 15 palabras)
-            words = daily_bias_text.split()
-            short_bias = " ".join(words[:15]) + "..." if len(words) > 15 else daily_bias_text
-            
-            # 4. Enviar reporte estructurado
+        if not channel: return
+
+        # Get next content from rotating library (Zero AI Cost)
+        content = self._get_next_content("free_analysis")
+        if not content:
+            print("Free Analysis skipped: No content available in library.")
+            return
+
+        try:
+            emoji = content.get("emoji", "📌")
+            ttl = content.get("title", "Briefing")
+            body = content.get("content", "")
+            title_line = f"{emoji} {ttl}"
             embed = discord.Embed(
-                title="📚 Sentinel Academy: Market Briefing",
-                description=f"Sentinel AI ha concluido el análisis de la jornada.\n\n**🔍 Concepto de Hoy:**\n{snippet}\n\n**🤖 Resumen Macro (Teaser):**\n*{short_bias}*",
+                title="📡 Sentinel Briefing",
+                description="*One block from the public library—dense by design.*",
                 color=COLOR_FREE,
                 timestamp=discord.utils.utcnow()
             )
-            embed.set_footer(text="Usa /upgrade para desbloquear el análisis completo y direcciones de mercado.")
+            self._add_safe_field(embed, title_line, body if body else "N/A", inline=False, format_type="code")
+            total = 15
+            try:
+                with open(self.content_library_path, "r", encoding="utf-8") as f:
+                    total = len(json.load(f).get("free_analysis", [])) or 15
+            except Exception:
+                pass
+            embed.set_footer(text=f"Block #{content.get('id', '?')} of {total} • /upgrade for live AI analytics")
             await channel.send(embed=embed)
+        except Exception as e:
+            print(f"Free Analysis Content Error: {e}")
 
     @tasks.loop(hours=24)
     async def unpin_old_logs_task(self):
@@ -885,6 +1155,25 @@ class SentinelCog(commands.Cog):
                 await channel.send(embed=embed)
         except Exception as e:
             print(f"Error en order_flow_tracker: {e}")
+
+    @tasks.loop(hours=168) # 1 Weekly Summary
+    async def weekly_performance_report(self):
+        """Sends the cumulative hit record to the Profit Wins channel every week."""
+        channel = self.bot.get_channel(PROFIT_WINS_ID)
+        if not channel: return
+        
+        chart_url = await self._generate_total_performance_chart()
+        if not chart_url: return
+        
+        embed = discord.Embed(
+            title="📊 WEEKLY PERFORMANCE SUMMARY",
+            description="Resumen semanal del flujo de aciertos detectados por Sentinel AI.",
+            color=0x00ff00,
+            timestamp=discord.utils.utcnow()
+        )
+        embed.set_image(url=chart_url)
+        embed.set_footer(text="Sentinel AI • Performance Grid Update")
+        await channel.send(embed=embed)
 
     # ==========================================
     # 🛡️ EVENT LISTENERS: REACTION ROLES & LOGS
@@ -1286,26 +1575,32 @@ class DiscordBotClient(commands.Bot):
                         "label": f"{symbol} Price Action",
                         "data": sampled,
                         "borderColor": line_color,
-                        "backgroundColor": "rgba(0,0,0,0)",
+                        "backgroundColor": "rgba(0, 255, 0, 0.1)" if "Win" in result else "rgba(255, 0, 0, 0.1)",
                         "borderWidth": 2,
-                        "pointRadius": 0
+                        "pointRadius": 0,
+                        "fill": True
                     }]
                 },
                 "options": {
                     "legend": {"display": False},
-                    "scales": {"xAxes": [{"display": False}]}
+                    "scales": {
+                        "xAxes": [{"display": False}],
+                        "yAxes": [{"gridLines": {"display": False}, "ticks": {"fontColor": "#888"}}]
+                    }
                 }
             }
-            import urllib.parse
-            import json
             encoded_config = urllib.parse.quote(json.dumps(chart_config))
-            chart_url = f"https://quickchart.io/chart?c={encoded_config}&w=400&h=200&bkg=white"
+            chart_url = f"https://quickchart.io/chart?c={encoded_config}&w=400&h=200&bkg=%230a0f1e"
             embed.set_image(url=chart_url)
             
         embed.set_footer(text="Sentinel AI • Autonomous Validation")
         
         try:
             await wins_channel.send(embed=embed)
+            # Log for Global Stats via Cog
+            cog = self.get_cog("SentinelCog")
+            if cog:
+                await cog._record_performance(result, f"{symbol} trade")
         except Exception as e:
             print(f"Failed to send auto-record: {e}")
             
