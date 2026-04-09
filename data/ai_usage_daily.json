@@ -1,0 +1,35 @@
+{
+  "2026-03-27": {
+    "by_provider": {
+      "gemini": {
+        "calls": 12,
+        "tokens": 22112,
+        "tokens_estimated": 22112,
+        "estimated_cost_usd": 0.0
+      }
+    },
+    "by_purpose": {
+      "system_loop": {
+        "calls": 2,
+        "tokens": 3428,
+        "estimated_cost_usd": 0.0
+      },
+      "admin_force": {
+        "calls": 1,
+        "tokens": 1316,
+        "estimated_cost_usd": 0.0
+      },
+      "monitor": {
+        "calls": 9,
+        "tokens": 17368,
+        "estimated_cost_usd": 0.0
+      }
+    },
+    "totals": {
+      "calls": 12,
+      "tokens": 22112,
+      "tokens_estimated": 22112,
+      "estimated_cost_usd": 0.0
+    }
+  }
+}

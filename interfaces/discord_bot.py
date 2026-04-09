@@ -41,6 +41,7 @@ UPGRADE_CHANNEL_ID = 1486410002880139335
 UPGRADE_MESSAGE_ID = 1486774005942976816
 UPGRADE_LOG_ID = 1486792994672738435
 PROFIT_WINS_ID = 1486414055152423063
+TECHNICAL_AUDIT_ID = 1485739818741928157 # Private channel for Admin review
 WELCOME_CHANNEL_ID = 1486409907728154765  # Target for Welcome Cards
 # ==========================================
 # 🛡️ MAPA DE REACTION ROLES Y LOGS
@@ -2044,6 +2045,7 @@ class SentinelCog(commands.Cog):
                 
                 oi_ctx = spike_data.get('oi_context', {})
                 oi_trend = oi_ctx.get('trend', 'N/A')
+                oi_val = oi_ctx.get('value_usd', 0)
                 
                 # Construccion del Embed Institucional
                 embed = discord.Embed(
@@ -2060,7 +2062,8 @@ class SentinelCog(commands.Cog):
                 absorcion = "\n*(Absorbido / Muro de límite)*" if abs(change_pct) < 0.1 else ""
                 embed.add_field(name="🏓 Impacto de Precio", value=f"{impacto_txt}{absorcion}", inline=False)
                 
-                embed.add_field(name="📊 Contexto Derivados (OI)", value=f"{oi_trend}", inline=False)
+                oi_val_str = f" [Vol: ${oi_val/1e9:.2f}B]" if oi_val > 0 else ""
+                embed.add_field(name="📊 Contexto Derivados (OI)", value=f"{oi_trend}{oi_val_str}", inline=False)
                 
                 embed.set_footer(text="Sentinel Flow Tracker • Institutional Data")
                 await channel.send(embed=embed)
@@ -2512,7 +2515,17 @@ class DiscordBotClient(commands.Bot):
         embed.set_footer(text="Sentinel AI • Autonomous Validation")
         
         try:
-            await wins_channel.send(embed=embed)
+            # 1. Private Technical Audit (All results)
+            audit_channel = self.get_channel(TECHNICAL_AUDIT_ID)
+            if audit_channel:
+                await audit_channel.send(embed=embed)
+            
+            # 2. Public Profit Wins (Only Wins)
+            if "Win" in result:
+                wins_channel = self.get_channel(PROFIT_WINS_ID)
+                if wins_channel:
+                    await wins_channel.send(embed=embed)
+
             # Log for Global Stats via Cog
             cog = self.get_cog("SentinelCog")
             if cog:

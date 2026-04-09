@@ -140,7 +140,8 @@ class MarketData:
             change_pct = ((close_p - open_p) / open_p) * 100
             direction = "Compra Agresiva 🟢" if close_p > open_p else "Venta Agresiva 🔴"
             
-            oi_context = await self.get_oi_context(symbol)
+            price_direction = "UP" if close_p > open_p else "DOWN"
+            oi_context = await self.get_oi_context(symbol, price_direction)
             return {
                 "spike": True, 
                 "direction": direction, 
@@ -154,10 +155,9 @@ class MarketData:
             
         return None
 
-    async def get_oi_context(self, symbol: str) -> dict:
-        """Returns Open Interest Context dict based on Binance Futures (USDM)."""
+    async def get_oi_context(self, symbol: str, price_direction: str = "NEUTRAL") -> dict:
+        """Returns Open Interest Context dict with interpretation based on price direction."""
         try:
-            # Format generic symbol to Binance FAPI symbol, e.g. BTC/USDT -> BTCUSDT
             fapi_symbol = symbol.replace("/", "").replace("USDC", "USDT")
             url = "https://fapi.binance.com/futures/data/openInterestHist"
             params = {
@@ -165,24 +165,45 @@ class MarketData:
                 "period": "15m",
                 "limit": 2
             }
-            async with aiohttp.ClientSession() as session:
+            # Adding User-Agent to minimize "N/A" results from Binance firewall
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Sentinel/1.0'}
+            
+            async with aiohttp.ClientSession(headers=headers) as session:
                 async with session.get(url, params=params, timeout=5) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         if data and len(data) >= 2:
                             prev_oi = float(data[-2].get('sumOpenInterestValue', 0))
                             curr_oi = float(data[-1].get('sumOpenInterestValue', 0))
+                            
                             if prev_oi > 0:
                                 delta_pct = ((curr_oi - prev_oi) / prev_oi) * 100
-                                if delta_pct > 0:
-                                    trend = f"⤴️ Aumentando (+{delta_pct:.2f}%) (Capital Nuevo)"
-                                else:
-                                    trend = f"⤵️ Disminuyendo ({delta_pct:.2f}%) (Cierre/Squeeze)"
+                                is_rising = delta_pct > 0.05 # Threshold for significant change
+                                is_falling = delta_pct < -0.05
+                                
+                                emoji = "⤴️" if is_rising else "⤵️" if is_falling else "➡️"
+                                trend_base = f"{emoji} {delta_pct:+.2f}%"
+                                
+                                # Matriz de Interpretación Institucional
+                                interpretation = "Consolidación"
+                                if price_direction == "DOWN":
+                                    if is_rising:
+                                        interpretation = "Shorts Entrando (Bearish)"
+                                    elif is_falling:
+                                        interpretation = "Longs Cerrando (Liquidados/TP)"
+                                elif price_direction == "UP":
+                                    if is_rising:
+                                        interpretation = "Longs Entrando (Bullish)"
+                                    elif is_falling:
+                                        interpretation = "Shorts Cerrando (Squeeze)"
+                                
                                 return {
                                     "value_usd": curr_oi,
                                     "delta_pct": delta_pct,
-                                    "trend": trend
+                                    "trend": f"{trend_base} • {interpretation}"
                                 }
+                    else:
+                        logger.warning(f"Binance OI API returned status {resp.status} for {symbol}")
         except Exception as e:
             logger.warning(f"Error fetching OI array for {symbol}: {e}")
             

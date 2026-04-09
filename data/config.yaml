@@ -7,7 +7,7 @@ gemini:
   model_name: "gemini-pro"
 
 trading:
-  symbol: "BTC/USDT"
+  symbols: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
   timeframe: "1h"
   exchange: "kraken"  # Cambiado a kraken para evitar bloqueos regionales de Binance
-  confidence_threshold: 0.70  # Umbral mínimo de confianza de la IA para operar
+  confidence_threshold: 0.65  # Umbral mínimo de confianza de la IA para operar
