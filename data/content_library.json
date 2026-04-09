@@ -311,9 +311,6 @@
     ],
     "rotation_state": {
         "informative_blocks_recent_ids": [
-            20,
-            35,
-            1,
             36,
             3,
             25,
@@ -325,7 +322,10 @@
             21,
             8,
             11,
-            7
+            7,
+            23,
+            30,
+            26
         ],
         "free_analysis_recent_block_ids": []
     }

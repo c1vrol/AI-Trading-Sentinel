@@ -158,6 +158,23 @@ class SentinelCog(commands.Cog):
         # Content Library for Deep Dive & Free Analysis rotation
         self.content_library_path = os.path.join(os.path.dirname(__file__), "..", "data", "content_library.json")
 
+        # Invite Rotation (Role-Bound Invites)
+        self.invite_map_path = os.path.join(os.path.dirname(__file__), "..", "data", "invite_mapping.json")
+        self.invite_cache = {} # { "code": uses }
+        self.recently_vanished_invites = {} # { "code": timestamp }
+        self.ROLE_NAMES_MAP = {
+            1486475961590485122: "3-DAY TRIAL",
+            1486476406018936953: "1-MONTH PRO",
+            1486476439044755497: "1-MONTH QUANTUM",
+            1486476426419900466: "LIFEPASS (LIFETIME)"
+        }
+    
+    @commands.Cog.listener()
+    async def on_invite_delete(self, invite: discord.Invite):
+        """Captures exactly when a single-use invite is consumed or expires."""
+        self.recently_vanished_invites[invite.code] = discord.utils.utcnow()
+        _log.info(f"🗑️ Invite {invite.code} was deleted/consumed from Discord.")
+
     DEEP_DIVE_TAGLINES = [
         "Three dense reads—liquidity, structure, and what could actually move price.",
         "Momentum quality, volatility regimes, and cross-asset beta—desk-style, no hype.",
@@ -514,6 +531,7 @@ class SentinelCog(commands.Cog):
         if not self.free_analysis_task.is_running(): self.free_analysis_task.start()
         if not self.unpin_old_logs_task.is_running(): self.unpin_old_logs_task.start()
         if not self.check_subscriptions_task.is_running(): self.check_subscriptions_task.start()
+        if not self.invite_maintenance_task.is_running(): self.invite_maintenance_task.start()
         if not self.major_signals_task.is_running(): self.major_signals_task.start()
         if not self.order_flow_tracker.is_running(): self.order_flow_tracker.start()
         if not self.major_signals_task.is_running(): self.major_signals_task.start()
@@ -600,9 +618,199 @@ class SentinelCog(commands.Cog):
             print(f"Error generating welcome card: {e}")
             return None
 
+    async def _update_invite_cache(self):
+        guild = self.bot.guilds[0] if self.bot.guilds else None
+        if not guild: return
+        try:
+            invites = await guild.invites()
+            self.invite_cache = {inv.code: inv.uses for inv in invites}
+        except Exception as e:
+            _log.error(f"Failed to update invite cache: {e}")
+
+
+
+    def _print_active_invites(self, mapping):
+        if not mapping:
+            print("\n⚠️ No active invite links found in mapping.")
+            return
+        print("\n--- 🛰️ CURRENT ACTIVE INVITE LINKS ---")
+        for code, role_id in mapping.items():
+            name = self.ROLE_NAMES_MAP.get(int(role_id), "Unknown Role")
+            print(f"✅ {name}: https://discord.gg/{code}")
+        print("---------------------------------------\n")
+        
+    async def _update_dashboard_channel(self, mapping):
+        """Envía/Actualiza el panel de invitaciones en Discord y borra el historial para no generar 'basura'."""
+        INVITE_DASHBOARD_CHANNEL_ID = 1486524461946634250
+        guild = self.bot.guilds[0] if self.bot.guilds else None
+        if not guild: return
+        
+        channel = guild.get_channel(INVITE_DASHBOARD_CHANNEL_ID)
+        if not channel: return
+        
+        if not mapping: return
+        
+        embed = discord.Embed(
+            title="🛰️ Enlaces de Invitación Activos",
+            description="Usa estos enlaces únicos. Se regeneran automáticamente en cuanto alguien los usa para un nuevo cliente.",
+            color=0x4a90e2,
+            timestamp=discord.utils.utcnow()
+        )
+        
+        for code, role_id in mapping.items():
+            name = self.ROLE_NAMES_MAP.get(int(role_id), "Unknown Role")
+            embed.add_field(name=name, value=f"https://discord.gg/{code}", inline=False)
+            
+        embed.set_footer(text="Sentinel AI Role Management")
+        
+        try:
+            # Borrar mensajes anteriores del bot para evitar "basura"
+            async for msg in channel.history(limit=20):
+                if msg.author == self.bot.user:
+                    try:
+                        await msg.delete()
+                    except:
+                        pass
+            
+            # Enviar el nuevo dashboard
+            await channel.send(embed=embed)
+        except Exception as e:
+            _log.error(f"Failed to update dashboard channel: {e}")
+
+
+    async def _ensure_invites_presence(self, guild, force_print=False):
+        """Revisa si cada rol VIP tiene un link activo. Si falta alguno (usado o expirado), lo repone."""
+        if not guild: return
+        
+        # 0. Determinar canal de destino con fallback
+        target_channel = guild.get_channel(WELCOME_CHANNEL_ID)
+        if not target_channel:
+            target_channel = next((c for c in guild.text_channels if c.permissions_for(guild.me).create_instant_invite), None)
+        
+        if not target_channel:
+            _log.error("CRITICAL: No valid channel found for invites!")
+            return
+
+        # 1. Obtener invitaciones actuales en Discord
+        try:
+            live_invites = await guild.invites()
+            live_codes = {inv.code: inv.uses for inv in live_invites}
+        except Exception as e:
+            _log.error(f"Error fetching live invites: {e}")
+            return
+
+        # 2. Leer mapeo actual
+        mapping = self._read_json(self.invite_map_path, {})
+        new_mapping = {}
+        changed = False
+
+        # 3. Verificar cada rol
+        for role_id in SUBSCRIPTION_PLANS.keys():
+            # Buscar si ya tenemos un código activo para este rol en Discord
+            active_code = None
+            for code, mapped_role_id in mapping.items():
+                if int(mapped_role_id) == int(role_id) and code in live_codes:
+                    active_code = code
+                    break
+            
+            if active_code:
+                new_mapping[active_code] = role_id
+            else:
+                # Falta el link -> Crear uno nuevo
+                try:
+                    name = self.ROLE_NAMES_MAP.get(role_id, "Unknown Role")
+                    invite = await target_channel.create_invite(
+                        max_uses=1, 
+                        max_age=86400, 
+                        unique=True, 
+                        reason=f"Sentinel Auto-Replenish: {name}"
+                    )
+                    new_mapping[invite.code] = role_id
+                    changed = True
+                    _log.info(f"🆕 Slot replenished: Created new link for {name}")
+                except Exception as e:
+                    _log.error(f"Failed to replenish invite for role {role_id}: {e}")
+
+        # 4. Guardar y actualizar caché si hubo cambios
+        if changed or force_print:
+            self._write_json(self.invite_map_path, new_mapping)
+            await self._update_invite_cache() # Refrescar self.invite_cache
+            self._print_active_invites(new_mapping)
+            await self._update_dashboard_channel(new_mapping)
+        
+        if changed:
+            _log.info("Invite maintenance: Slots synchronized and replenished.")
+
+    @tasks.loop(hours=1)
+    async def invite_maintenance_task(self):
+        """Revisión horaria para reponer links que expiraron por tiempo (24h discord)."""
+        guild = self.bot.guilds[0] if self.bot.guilds else None
+        if guild:
+            await self._ensure_invites_presence(guild)
+
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         """Welcomes users: Immediately with a card, and after 3 minutes with a DM."""
+        _log.info(f"🟢 ON_MEMBER_JOIN TRIGGERED FOR: {member.name} (ID: {member.id})")
+        # --- PHASE 0: INVITE TRACKING & AUTO-ROLE ---
+        used_code = None
+        try:
+            new_invites = await member.guild.invites()
+            current_codes = {inv.code for inv in new_invites}
+            
+            mapping = self._read_json(self.invite_map_path, {})
+            
+            # --- MEJORA: Buscar en eventos recientes ---
+            now = discord.utils.utcnow()
+            for code, timestamp in list(self.recently_vanished_invites.items()):
+                if (now - timestamp).total_seconds() < 10 and code in mapping:
+                    used_code = code
+                    _log.info(f"✅ Detection (Event): VIP Code {used_code} fired on_invite_delete recently.")
+                    # Limpiar para evitar falsos positivos dobles
+                    del self.recently_vanished_invites[code]
+                    break
+                    
+            if not used_code:
+                # Caso A: El link desapareció pero por alguna razón no vimos el evento
+                for cached_code in list(self.invite_cache.keys()):
+                    if cached_code not in current_codes:
+                        if cached_code in mapping:
+                            used_code = cached_code
+                            _log.info(f"✅ Detection (Diff): VIP Code {used_code} disappeared.")
+                            break
+            
+            if not used_code:
+                # Caso B: El link sigue ahí pero aumentó el contador 
+                for inv in new_invites:
+                    if inv.code in self.invite_cache and inv.uses > self.invite_cache[inv.code]:
+                        if inv.code in mapping:
+                            used_code = inv.code
+                            _log.info(f"✅ Detection (Usage): VIP Code {used_code} use count increased.")
+                            break
+
+            if not used_code:
+                _log.warning(f"⚠️ Could not detect which invite was used by {member.name}.")
+
+            # Sincronizar caché para el siguiente
+            self.invite_cache = {inv.code: inv.uses for inv in new_invites}
+            
+            if used_code:
+                target_role_id = mapping.get(used_code)
+                if target_role_id:
+                    role = member.guild.get_role(int(target_role_id))
+                    if role:
+                        await member.add_roles(role, reason=f"Auto-Role: Joined via {used_code}")
+                        _log.info(f"✅ AUTO-ASSIGN SUCCESS: {member.name} -> {role.name}")
+                        
+                        # REPOSICIÓN INMEDIATA
+                        await self._ensure_invites_presence(member.guild)
+                    else:
+                        _log.error(f"❌ ERROR: Role ID {target_role_id} not found! Is the bot's role placed higher than this one?")
+
+
+        except Exception as e:
+            _log.error(f"Error in invite tracking: {e}")
+
         # --- FILTERS ---
         if member.bot: return # Ignorar bots
         
@@ -806,7 +1014,20 @@ class SentinelCog(commands.Cog):
         embed.set_footer(text="Sentinel AI • Order Flow Intelligence")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="ai_scan", description="Deep analysis. [Quantum Exclusive]")
+    @app_commands.command(name="force_rotate_invites", description="[ADMIN] Regenerates all role-bound invite links immediately.")
+    @app_commands.default_permissions(administrator=True)
+    async def cmd_force_rotate_invites(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            guild = interaction.guild
+            # Forzar el borrado de mapeo anterior para generar marcas nuevas
+            self._write_json(self.invite_map_path, {})
+            await self._ensure_invites_presence(guild, force_print=True)
+            await interaction.followup.send("✅ Invite rotation successful. Check the bot console for the new links.")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error during rotation: {e}")
+
+    @app_commands.command(name="ai_scan", description="Deep Intelligence Scan: Technical + Sentiment + Volatility confluence.")
     @app_commands.describe(coin="Select the cryptocurrency to scan")
     @app_commands.checks.has_any_role(ROLE_QUANTUM, ROLE_LIFETIME)
     async def cmd_ai_scan(self, interaction: discord.Interaction, coin: Literal["BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "MATIC", "NEAR", "AVAX", "LINK", "INJ", "STX", "FET", "TAO", "RENDER", "FIL", "ICP", "ARB", "OP"]):
@@ -2306,6 +2527,66 @@ class SentinelCog(commands.Cog):
         except Exception as e:
             print(f"Error logging system issue: {e}")
 
+    def _read_json(self, path, default_val):
+        if not os.path.exists(path): return default_val
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return default_val
+
+    def _write_json(self, path, data):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            _log.error(f"Failed to write JSON to {path}: {e}")
+
+    @tasks.loop(minutes=30)
+    async def check_subscriptions_task(self):
+        subs = self._read_json(self.subs_path, {})
+        now = datetime.datetime.now(datetime.timezone.utc)
+        changed = False
+        
+        guild = self.bot.guilds[0] if self.bot.guilds else None
+        if not guild: return
+        
+        for user_id_str, data in list(subs.items()):
+            if data.get("status") == "Expired" or data.get("duration") == -1:
+                continue
+                
+            expire_date_str = data.get("expire_date")
+            if not expire_date_str: continue
+            
+            try:
+                expire_date = datetime.datetime.fromisoformat(expire_date_str)
+                if now > expire_date:
+                    data["status"] = "Expired"
+                    changed = True
+                    
+                    member = guild.get_member(int(user_id_str)) or await guild.fetch_member(int(user_id_str))
+                    if member:
+                        role_id = data.get("role_id")
+                        synonym_id = ROLE_TRANSITIONS.get(role_id)
+                        
+                        roles_to_remove = []
+                        if role_id:
+                            r = guild.get_role(role_id)
+                            if r: roles_to_remove.append(r)
+                        if synonym_id:
+                            r = guild.get_role(synonym_id)
+                            if r: roles_to_remove.append(r)
+                            
+                        if roles_to_remove:
+                            await member.remove_roles(*roles_to_remove, reason="Subscription Expired")
+                            _log.info(f"Subscription expired for {member.name}. Roles removed.")
+            except Exception as e:
+                _log.error(f"Failed to process subscription expiration for {user_id_str}: {e}")
+                
+        if changed:
+            self._write_json(self.subs_path, subs)
+
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         roles_before = set([r.id for r in before.roles])
@@ -2515,6 +2796,15 @@ class DiscordBotClient(commands.Bot):
 
     async def on_ready(self):
         _log.info(f'Sentinel AI System initialized as {self.user}')
+        # Initialize invite cache for tracking
+        cog = self.get_cog("SentinelCog")
+        if cog:
+            await cog._update_invite_cache()
+            
+            # Validación Inteligente de Invitaciones (Auto-Replenish)
+            guild = self.guilds[0] if self.guilds else None
+            if guild:
+                await cog._ensure_invites_presence(guild, force_print=True)
 
     # El método send_alert se requiere por la tarea market_monitor de main.py
     async def send_alert(self, symbol, price_action, sentiment_data, ai_insight=None, second_read_note=None):
