@@ -1,7 +1,14 @@
+from dotenv import load_dotenv
+
+# Cargar variables de entorno desde .env (DEBE SER LO PRIMERO)
+load_dotenv()
+
 import asyncio
 import logging
 import yaml
 import os
+import json
+import datetime
 
 from core.market_data import MarketData
 from core.ai_engine import AIEngine
@@ -9,12 +16,6 @@ from core.ai_polish_manager import should_run_alert_second_read, volatility_aler
 from core.logic_gate import LogicGate
 from interfaces.discord_bot import DiscordBotClient
 from scrapers.news_fetcher import NewsFetcher
-import json
-
-from dotenv import load_dotenv
-
-# Cargar variables de entorno desde .env
-load_dotenv()
 
 # Configuración básica de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -45,6 +46,30 @@ def save_active_trades(trades: list):
     except Exception as e:
         logger.error(f"Error saving active trades: {e}")
 
+def update_heatmap_cache(symbol: str, sentiment_data: dict, insight: str = None):
+    path = os.path.join(os.path.dirname(__file__), "data", "heatmap_cache.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        cache = {}
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as file:
+                try:
+                    cache = json.load(file)
+                except json.JSONDecodeError:
+                    cache = {}
+            
+        cache[symbol] = {
+            "sentiment": sentiment_data.get("sentiment", "NEUTRAL"),
+            "confidence": sentiment_data.get("confidence", 0.0),
+            "thesis": sentiment_data.get("thesis", ""),
+            "insight": insight or "",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump(cache, file, indent=4)
+    except Exception as e:
+        logger.error(f"Error updating heatmap cache: {e}")
+
 async def market_monitor(config: dict, bot: DiscordBotClient):
     """
     Bucle principal de monitoreo no bloqueante del bot.
@@ -64,6 +89,8 @@ async def market_monitor(config: dict, bot: DiscordBotClient):
     logger.info(f"Iniciando bucle de monitoreo para {len(symbols)} activos...")
 
     active_trades = load_active_trades()  # Persistence: Load live signals
+    # Anti-repetición: {'BTC/USDT': timestamp}
+    last_analyzed_signals = {}
 
     try:
         while True:
@@ -79,20 +106,36 @@ async def market_monitor(config: dict, bot: DiscordBotClient):
                         save_needed = True
                         
                         if trade['sentiment'] == 'BULLISH':
+                            # Virtual Trailing Stop: Break Even al 50% del TP
+                            half_tp = trade['entry_price'] + (trade['tp'] - trade['entry_price']) * 0.5
+                            if current_trade_price >= half_tp and not trade.get('break_even'):
+                                trade['sl'] = trade['entry_price']
+                                trade['break_even'] = True
+                                logger.info(f"🛡️ {trade['symbol']} Break Even Activado (Target 50% alcanzado)")
+                                save_needed = True
+
                             if current_trade_price >= trade['tp']:
                                 await bot.log_automated_record(trade['symbol'], trade['entry_price'], current_trade_price, 'BULLISH', 'Win ✅', trade['history'])
                                 active_trades.remove(trade)
                             elif current_trade_price <= trade['sl']:
-                                # Loss ❌ - Logged to Audit
-                                await bot.log_automated_record(trade['symbol'], trade['entry_price'], current_trade_price, 'BULLISH', 'Loss ❌', trade['history'])
+                                result_str = "Break Even 🛡️" if trade.get('break_even') else "Loss ❌"
+                                await bot.log_automated_record(trade['symbol'], trade['entry_price'], current_trade_price, 'BULLISH', result_str, trade['history'])
                                 active_trades.remove(trade)
                         else: # BEARISH
+                            # Virtual Trailing Stop: Break Even al 50% del TP
+                            half_tp = trade['entry_price'] - (trade['entry_price'] - trade['tp']) * 0.5
+                            if current_trade_price <= half_tp and not trade.get('break_even'):
+                                trade['sl'] = trade['entry_price']
+                                trade['break_even'] = True
+                                logger.info(f"🛡️ {trade['symbol']} Break Even Activado (Target 50% alcanzado)")
+                                save_needed = True
+
                             if current_trade_price <= trade['tp']:
                                 await bot.log_automated_record(trade['symbol'], trade['entry_price'], current_trade_price, 'BEARISH', 'Win ✅', trade['history'])
                                 active_trades.remove(trade)
                             elif current_trade_price >= trade['sl']:
-                                # Loss ❌ - Logged to Audit
-                                await bot.log_automated_record(trade['symbol'], trade['entry_price'], current_trade_price, 'BEARISH', 'Loss ❌', trade['history'])
+                                result_str = "Break Even 🛡️" if trade.get('break_even') else "Loss ❌"
+                                await bot.log_automated_record(trade['symbol'], trade['entry_price'], current_trade_price, 'BEARISH', result_str, trade['history'])
                                 active_trades.remove(trade)
                 
                 if save_needed:
@@ -113,6 +156,14 @@ async def market_monitor(config: dict, bot: DiscordBotClient):
                 
                 # Solo seguimos si hay volatilidad (optimización de llamadas a la IA)
                 if status != "NEUTRAL":
+                    # ANTI-REPETICIÓN: Si ya analizamos esta vela de 1h para esta moneda, ignoramos
+                    last_ts = last_analyzed_signals.get(symbol)
+                    current_ts = price_action.get("timestamp")
+                    
+                    if last_ts == current_ts:
+                        # (Opcional: Solo saltar si el status es el mismo, pero por ahora somos conservadores)
+                        continue
+
                     logger.info(f"⚠️ Volatilidad detectada en {symbol} ({status}). Iniciando subsistema de IA y Noticias...")
                     # 2. Conseguir las últimas noticias
                     news_text = await news_fetcher.fetch_latest_news(symbol)
@@ -168,6 +219,9 @@ async def market_monitor(config: dict, bot: DiscordBotClient):
                             second_read_note=second_read,
                         )
                         
+                        # Actualizar Heatmap Cache con IA insights
+                        update_heatmap_cache(symbol, sentiment_data, ai_insight)
+                        
                         # 7. Registrar señal para su seguimiento automático
                         sentiment_str = sentiment_data.get('sentiment', '').upper()
                         if 'BULL' in sentiment_str or 'BEAR' in sentiment_str:
@@ -186,11 +240,16 @@ async def market_monitor(config: dict, bot: DiscordBotClient):
                             })
                             save_active_trades(active_trades)
                             logger.info(f"📈 {symbol} tracked para validación: TP={current_price*tp_pct:,.2f} SL={current_price*sl_pct:,.2f}")
+                        
+                        # Marcar como analizada esta vela
+                        last_analyzed_signals[symbol] = price_action.get("timestamp")
                     else:
                         logger.info(f"❌ Confluencia insuficiente para {symbol}. Alerta abortada.")
+                # Pequeña pausa entre activos para evitar ráfagas de 429 (Rate Limit)
+                await asyncio.sleep(8)
             
-            # Esperar antes del siguiente check
-            await asyncio.sleep(60)
+            # Esperar antes del siguiente check (90s para respetar cuotas API)
+            await asyncio.sleep(90)
 
     except asyncio.CancelledError:
         logger.info("Monitoreo detenido por cancelación.")

@@ -23,6 +23,8 @@ try:
 except ImportError:
     _record_ai_usage = None  # type: ignore[misc, assignment]
 
+from core import groq_client
+
 _NEWS_CAP = 1800
 _MAX_TP_SL_MOVE_FRAC = 0.28
 
@@ -348,9 +350,13 @@ class AIEngine:
         """Solo claves reservadas a esta misión; nunca se reutilizan claves de otra cola."""
         return [k for k in self.missions.get(mission, []) if k in self.clients]
 
-    def _mark_cooldown(self, key: str):
-        logger.warning("API Key %s... in cooldown (429).", key[:10])
-        self.cooldowns[key] = time.time() + 60
+    def _mark_cooldown(self, key: str, duration: float = 60):
+        logger.warning(
+            "API Key %s... enters cooldown for %.1fs (429/Rate Limit).",
+            key[:10],
+            duration,
+        )
+        self.cooldowns[key] = time.time() + duration
 
     def _filter_cooldown(self, pool: list[str]) -> list[str]:
         now = time.time()
@@ -376,6 +382,12 @@ class AIEngine:
         for attempt in range(max_retries):
             pool = self._filter_cooldown(pool_base)
             if not pool:
+                # OPTIMIZACIÓN: Si todas las llaves están bloqueadas (429) y tenemos Groq listo,
+                # no esperamos los 9 reintentos. Lanzamos el error ya para que el fallback actúe.
+                if attempt > 0 and groq_client.groq_configured():
+                    logger.warning(f"All Gemini keys in cooldown for {mission}. Fast-falling back to Groq.")
+                    raise RuntimeError("gemini_exhausted_retries")
+                
                 await asyncio.sleep(1.0)
                 pool = pool_base
 
@@ -385,7 +397,7 @@ class AIEngine:
             try:
                 response = await asyncio.to_thread(
                     client.models.generate_content,
-                    model="gemini-2.5-flash",
+                    model="gemini-2.0-flash",
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_blob,
@@ -411,17 +423,46 @@ class AIEngine:
                     or "resourceexhausted" in error_str
                     or "too many requests" in error_str
                 )
+                
                 async with self._scheduler._lock:
                     self._scheduler.rollback_reserve(key)
                     self._scheduler.persist_rpd_to_disk()
+
                 if is_429:
-                    self._mark_cooldown(key)
+                    # Detección de retry_delay del error
+                    retry_wait = 0.0
+                    try:
+                        # Algunos SDKs de Google exponen el retry_delay en los atributos
+                        if hasattr(e, 'retry_delay'):
+                            retry_wait = float(getattr(e, 'retry_delay'))
+                        elif 'retrydelay' in error_str:
+                            # Parsear "retryDelay: 26s" del string si no hay atributo
+                            match = re.search(r"retrydelay(?::|\s*)(\d+)", error_str)
+                            if match:
+                                retry_wait = float(match.group(1))
+                    except:
+                        pass
+                    
+                    # Backoff Exponencial si no se detectó delay específico o como extra
+                    if retry_wait <= 0:
+                        retry_wait = (2 ** attempt) + random.uniform(0.5, 1.5)
+                    
+                    # Limitar espera máxima (60s) para no bloquear la tarea perpetuamente
+                    retry_wait = min(60.0, retry_wait)
+                    
+                    self._mark_cooldown(key, duration=retry_wait + 5.0)
+                    
                     if attempt < max_retries - 1:
-                        logger.info("429 on key; mission %s — retrying with another key", mission)
-                        await asyncio.sleep(0.5 + random.random() * 0.5)
+                        logger.info(
+                            "Mission %s: 429 on key %s...; actual retry_wait=%.1fs", 
+                            mission, key[:8], retry_wait
+                        )
+                        await asyncio.sleep(retry_wait)
                         continue
+                        
+                # Si falló y es el último intento o no es un 429 recuperable
                 logger.error("Mission %s error [%s...]: %s", mission, key[:8], e)
-                raise e
+                raise RuntimeError("gemini_exhausted_retries from exception") from e
 
         raise RuntimeError("gemini_exhausted_retries")
 
@@ -572,16 +613,56 @@ class AIEngine:
                 "thesis": str(data.get("thesis", ""))[:280],
                 "disclaimer": str(data.get("disclaimer", "Not financial advice."))[:200],
             }
+        except Exception as rt_e:
+            is_exhausted = "exhausted_retries" in str(rt_e).lower()
+            is_429 = "429" in str(rt_e) or "resourceexhausted" in str(rt_e).lower()
+            
+            if (is_exhausted or is_429) and groq_client.groq_configured():
+                logger.warning(f"Gemini exhausted for {mission}. Falling back to Groq for analyze_sentiment.")
+                try:
+                    groq_resp = await groq_client.groq_chat(
+                        system=sys_instr,
+                        user=prompt,
+                        max_tokens=420,
+                        temperature=0.35,
+                        purpose="sentiment_fallback",
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    # Groq might wrap the json in ```json ... ``` markdown
+                    clean_resp = groq_resp.strip()
+                    if clean_resp.startswith("```"):
+                        lines = clean_resp.split("\n")
+                        if lines[0].startswith("```"):
+                            lines = lines[1:]
+                        if lines and lines[-1].startswith("```"):
+                            lines = lines[:-1]
+                        clean_resp = "\n".join(lines).strip()
+                    
+                    data = json.loads(clean_resp)
+                    return {
+                        "sentiment": str(data.get("sentiment", "NEUTRAL")).upper(),
+                        "confidence": float(data.get("confidence", 0.0)),
+                        "support": 0.0,
+                        "resistance": 0.0,
+                        "thesis": str(data.get("thesis", ""))[:280],
+                        "disclaimer": str(data.get("disclaimer", "Not financial advice."))[:200],
+                    }
+                except Exception as groq_e:
+                    logger.error("analyze_sentiment (Groq fallback failed): %s", groq_e)
+            else:
+                logger.error("analyze_sentiment: %s", rt_e)
         except Exception as e:
             logger.error("analyze_sentiment: %s", e)
-            return {
-                "sentiment": "NEUTRAL",
-                "confidence": 0.0,
-                "support": 0.0,
-                "resistance": 0.0,
-                "thesis": "Cross-check live tape; multiple factors at play.",
-                "disclaimer": "",
-            }
+            
+        return {
+            "sentiment": "NEUTRAL",
+            "confidence": 0.0,
+            "support": 0.0,
+            "resistance": 0.0,
+            "thesis": "Cross-check live tape; multiple factors at play.",
+            "disclaimer": "",
+        }
 
     async def analyze_market_batch(self, market_data: dict, lang: str = "en") -> dict:
         sys_instr = f"{self._lang_line(lang)} JSON only, no markdown. {PROMPT_STRUCTURE_ONLY_ES}"
@@ -602,6 +683,36 @@ class AIEngine:
                 response_mime_type="application/json",
             )
             return json.loads(gen_response.text)
+        except Exception as rt_e:
+            is_exhausted = "exhausted_retries" in str(rt_e).lower()
+            is_429 = "429" in str(rt_e) or "resourceexhausted" in str(rt_e).lower()
+            
+            if (is_exhausted or is_429) and groq_client.groq_configured():
+                logger.warning(f"Gemini exhausted for MONITOR. Falling back to Groq for analyze_market_batch.")
+                try:
+                    groq_resp = await groq_client.groq_chat(
+                        system=sys_instr,
+                        user=prompt,
+                        max_tokens=250,
+                        temperature=0.35,
+                        purpose="market_batch_fallback",
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    clean_resp = groq_resp.strip()
+                    if clean_resp.startswith("```"):
+                        lines = clean_resp.split("\n")
+                        if lines[0].startswith("```"):
+                            lines = lines[1:]
+                        if lines and lines[-1].startswith("```"):
+                            lines = lines[:-1]
+                        clean_resp = "\n".join(lines).strip()
+                    return json.loads(clean_resp)
+                except Exception as groq_e:
+                    logger.error("analyze_market_batch (Groq fallback failed): %s", groq_e)
+            else:
+                logger.error("analyze_market_batch: %s", rt_e)
+            return {}
         except Exception as e:
             logger.error("analyze_market_batch: %s", e)
             return {}
@@ -634,6 +745,28 @@ class AIEngine:
                 prompt=prompt, system_instruction=sys_instr, mission="MONITOR"
             )
             return gen_response.text.strip()
+        except Exception as rt_e:
+            is_exhausted = "exhausted_retries" in str(rt_e).lower()
+            is_429 = "429" in str(rt_e) or "resourceexhausted" in str(rt_e).lower()
+            
+            if (is_exhausted or is_429) and groq_client.groq_configured():
+                logger.warning(f"Gemini exhausted for MONITOR. Falling back to Groq for get_emergency_insight.")
+                try:
+                    groq_resp = await groq_client.groq_chat(
+                        system=sys_instr,
+                        user=prompt,
+                        max_tokens=60,
+                        temperature=0.4,
+                        purpose="emergency_fallback"
+                    )
+                    return groq_resp.strip()
+                except Exception as groq_e:
+                    logger.error("get_emergency_insight (Groq fallback failed): %s", groq_e)
+            else:
+                logger.error("get_emergency_insight: %s", rt_e)
+            return (
+                "Volatility print in line with tape; confirm against your own levels and risk rules."
+            )
         except Exception as e:
             logger.error("get_emergency_insight: %s", e)
             return (

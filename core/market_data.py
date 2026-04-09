@@ -57,17 +57,18 @@ class MarketData:
         
         change_pct = ((close_price - open_price) / open_price) * 100
         
-        # Umbral institucional ajustado (0.2% para 4h/1h/15m)
+        # Umbral institucional ajustado (0.5% para 4h/1h/15m para ahorro de tokens)
         status = "NEUTRAL"
-        if change_pct > 0.2:
+        if change_pct > 0.5:
             status = "Volatile UP"
-        elif change_pct < -0.2:
+        elif change_pct < -0.5:
             status = "Volatile DOWN"
             
         return {
             "status": status,
             "close_price": close_price,
-            "change_pct": change_pct
+            "change_pct": change_pct,
+            "timestamp": last_closed_candle[0]
         }
 
     def calculate_rsi(self, prices: list, period: int = 14) -> float:

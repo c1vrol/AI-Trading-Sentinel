@@ -1,12 +1,12 @@
 {
-  "utc_date": "2026-03-27",
+  "utc_date": "2026-04-09",
   "rpd_by_key_fp": {
-    "042532bd6cb70715": 3,
-    "1dbe1659971797b5": 3,
-    "fd264f4b868e61b8": 3,
+    "042532bd6cb70715": 0,
+    "1dbe1659971797b5": 0,
+    "fd264f4b868e61b8": 0,
     "b7f416fceee8220d": 0,
     "904e21a994315ffd": 1,
-    "3552ce4f33279e2b": 2
+    "3552ce4f33279e2b": 0
   },
-  "successful_calls_today": 12
+  "successful_calls_today": 1
 }

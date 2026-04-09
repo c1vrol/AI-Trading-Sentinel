@@ -31,5 +31,39 @@
       "tokens_estimated": 22112,
       "estimated_cost_usd": 0.0
     }
+  },
+  "2026-04-09": {
+    "by_provider": {
+      "gemini": {
+        "calls": 1,
+        "tokens": 1018,
+        "tokens_estimated": 1018,
+        "estimated_cost_usd": 0.0
+      },
+      "groq": {
+        "calls": 1,
+        "tokens": 422,
+        "tokens_estimated": 0,
+        "estimated_cost_usd": 0.0
+      }
+    },
+    "by_purpose": {
+      "admin_force": {
+        "calls": 1,
+        "tokens": 1018,
+        "estimated_cost_usd": 0.0
+      },
+      "sentiment_fallback": {
+        "calls": 1,
+        "tokens": 422,
+        "estimated_cost_usd": 0.0
+      }
+    },
+    "totals": {
+      "calls": 2,
+      "tokens": 1440,
+      "tokens_estimated": 1018,
+      "estimated_cost_usd": 0.0
+    }
   }
 }

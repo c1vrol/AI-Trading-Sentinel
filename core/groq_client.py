@@ -196,6 +196,7 @@ class GroqManager:
         temperature: float = 0.35,
         quality: QualityMode = "high_quality",
         purpose: str = "groq_chat",
+        response_format: dict | None = None,
     ) -> str:
         if quality == "low_cost":
             max_tokens = min(max_tokens, int(os.getenv("GROQ_LOW_COST_MAX_TOKENS", "320")))
@@ -216,6 +217,9 @@ class GroqManager:
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        if response_format:
+            payload["response_format"] = response_format
+            
         max_waves = int(os.getenv("GROQ_MAX_WAVES", "4"))
         aggressive = fallback_strategy_aggressive()
         if aggressive:
@@ -333,6 +337,7 @@ async def groq_chat(
     temperature: float = 0.35,
     quality: QualityMode = "high_quality",
     purpose: str = "groq_chat",
+    response_format: dict | None = None,
 ) -> str:
     mgr = get_groq_manager()
     if not mgr:
@@ -344,4 +349,5 @@ async def groq_chat(
         temperature=temperature,
         quality=quality,
         purpose=purpose,
+        response_format=response_format,
     )

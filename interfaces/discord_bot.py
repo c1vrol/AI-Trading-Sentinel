@@ -41,6 +41,7 @@ UPGRADE_CHANNEL_ID = 1486410002880139335
 UPGRADE_MESSAGE_ID = 1486774005942976816
 UPGRADE_LOG_ID = 1486792994672738435
 PROFIT_WINS_ID = 1486414055152423063
+HEATMAP_ID = int(os.getenv("HEATMAP_CHANNEL_ID", "1491907288104046764"))
 TECHNICAL_AUDIT_ID = 1485739818741928157 # Private channel for Admin review
 WELCOME_CHANNEL_ID = 1486409907728154765  # Target for Welcome Cards
 # ==========================================
@@ -55,6 +56,13 @@ ADMIN_ROLE_ID = 1486177336054517881
 ROLE_QUANTUM = 1486157344944427129
 ROLE_LIFETIME = 1486167569432838154
 ROLE_CORE = 1486156058836729896
+
+SUBSCRIPTION_PLANS = {
+    1486475961590485122: 3,   # 3 Days Trial
+    1486476406018936953: 30,  # 1 Month Core/Pro
+    1486476439044755497: 30,  # 1 Month Quantum
+    1486476426419900466: -1   # Lifetime
+}
 
 ROLE_TRANSITIONS = {
     # Old Role: New Role
@@ -97,6 +105,11 @@ class SentinelCog(commands.Cog):
         self._bot_ai_fuse_path = os.path.join(os.path.dirname(__file__), "..", "data", "bot_ai_fuse_state.json")
         self._load_bot_ai_fuse_from_disk()
         
+        # Subscription System (Portero Temporal)
+        self.subs_path = os.path.join(os.path.dirname(__file__), "..", "data", "subscriptions.json")
+        self.trial_history_path = os.path.join(os.path.dirname(__file__), "..", "data", "trial_history.json")
+        
+
         # Caché Quantum Scan: compartida entre todos los usuarios (misma moneda → mismo texto)
         self.quantum_scan_cache_path = os.path.join(
             os.path.dirname(__file__), "..", "data", "quantum_scan_cache.json"
@@ -495,10 +508,12 @@ class SentinelCog(commands.Cog):
 
     async def cog_load(self):
         # Iniciar las tareas automáticas
+        if not self.sentiment_heatmap_task.is_running(): self.sentiment_heatmap_task.start()
         if not self.daily_bias_task.is_running(): self.daily_bias_task.start()
         if not self.ai_deep_dive_task.is_running(): self.ai_deep_dive_task.start()
         if not self.free_analysis_task.is_running(): self.free_analysis_task.start()
         if not self.unpin_old_logs_task.is_running(): self.unpin_old_logs_task.start()
+        if not self.check_subscriptions_task.is_running(): self.check_subscriptions_task.start()
         if not self.major_signals_task.is_running(): self.major_signals_task.start()
         if not self.order_flow_tracker.is_running(): self.order_flow_tracker.start()
         if not self.major_signals_task.is_running(): self.major_signals_task.start()
@@ -1443,6 +1458,41 @@ class SentinelCog(commands.Cog):
             await self.log_system_error("Sync Maintenance Error", str(e))
 
     # 🧠 TAREAS AUTOMÁTICAS
+    @tasks.loop(hours=4)
+    async def sentiment_heatmap_task(self):
+        channel = self.bot.get_channel(HEATMAP_ID)
+        if not channel: return
+        
+        cache_path = os.path.join(os.path.dirname(__file__), "..", "data", "heatmap_cache.json")
+        try:
+            if not os.path.exists(cache_path):
+                return
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+            if not cache: return
+            
+            embed = discord.Embed(
+                title="🗺️ SENTIMENT HEATMAP (4H)",
+                description="Resumen de sentimiento institucional en tiempo real derivado de la IA del Desk.",
+                color=0x00A2FF,
+                timestamp=discord.utils.utcnow()
+            )
+            for symbol, data in cache.items():
+                sentiment = data.get("sentiment", "NEUTRAL").upper()
+                emoji = "🟢" if "BULL" in sentiment else "🔴" if "BEAR" in sentiment else "⚪"
+                thesis = data.get("thesis", "Sin tesis disponible.")
+                conf = data.get("confidence", 0.0)
+                
+                embed.add_field(
+                    name=f"{emoji} {symbol} | {sentiment} ({conf})",
+                    value=f"*{thesis}*",
+                    inline=False
+                )
+            embed.set_footer(text="Sentinel AI • Terminal Analysis")
+            await channel.send(embed=embed)
+        except Exception as e:
+            print(f"Heatmap Task Error: {e}")
+
     time_8am_est = datetime.time(hour=13, minute=0, tzinfo=datetime.timezone.utc)
     @tasks.loop(time=time_8am_est)
     async def daily_bias_task(self):
@@ -2261,24 +2311,84 @@ class SentinelCog(commands.Cog):
         roles_before = set([r.id for r in before.roles])
         roles_after = set([r.id for r in after.roles])
         
-        # Detectar si un bot externo removió algún rol
+        added_roles = roles_after - roles_before
         removed_roles = roles_before - roles_after
         
+        # 1. Vigilar roles removidos (Si quitas el primario, quitar el sinónimo)
         roles_to_remove = []
         for old_id in removed_roles:
             if old_id in ROLE_TRANSITIONS:
-                # El usuario perdió el rol base (ej. expiró suscripción Whop/externa)
+                # El usuario perdió el rol base temporal (o lo quitaste manualmente)
                 new_id = ROLE_TRANSITIONS[old_id]
                 new_role = after.guild.get_role(new_id)
                 if new_role and new_role in after.roles:
                     roles_to_remove.append(new_role)
                     
+                # Marcar en subs.json como expirado manualmente
+                subs = self._read_json(self.subs_path, {})
+                str_id = str(after.id)
+                if str_id in subs and subs[str_id].get("role_id") == old_id:
+                    subs[str_id]["status"] = "Expired"
+                    self._write_json(self.subs_path, subs)
+
         if roles_to_remove:
             try:
-                await after.remove_roles(*roles_to_remove)
-                await self._send_log(after.guild, after, "🤖", "Access Expired", "Base role was removed externally. VIP role automatically revoked.")
+                await after.remove_roles(*roles_to_remove, reason="Primary subscription role removed.")
+                await self._send_log(after.guild, after, "🤖", "Access Revoked", "Base role was removed. VIP synonym role automatically revoked.")
             except Exception as e:
-                print(f"Error removing expired VIP roles: {e}")
+                _log.error(f"Error removing expired VIP synonym roles: {e}")
+
+        # 2. Vigilar roles añadidos (Si agregas el primario, agregar sinónimo y registrar en Trial)
+        roles_to_add = []
+        for new_id in added_roles:
+            if new_id in SUBSCRIPTION_PLANS:
+                duration_days = SUBSCRIPTION_PLANS[new_id]
+                
+                # Check 3-Day Trial Limit
+                trial_role_id = 1486475961590485122
+                if new_id == trial_role_id:
+                    history = self._read_json(self.trial_history_path, [])
+                    if after.id in history:
+                        # Abuso de Trial
+                        try:
+                            trial_role = after.guild.get_role(trial_role_id)
+                            if trial_role:
+                                await after.remove_roles(trial_role, reason="Trial already used")
+                            _log.warning(f"Reverted 3-day trial for {after.name}. Already used.")
+                        except Exception as e:
+                            _log.error(f"Failed to revert trial abuse: {e}")
+                        continue
+                    else:
+                        history.append(after.id)
+                        self._write_json(self.trial_history_path, history)
+
+                # Add synonym
+                synonym_id = ROLE_TRANSITIONS.get(new_id)
+                if synonym_id:
+                    synonym_role = after.guild.get_role(synonym_id)
+                    if synonym_role and synonym_role not in after.roles:
+                        roles_to_add.append(synonym_role)
+                        
+                # Register the subscription start/end date
+                subs = self._read_json(self.subs_path, {})
+                now = datetime.datetime.now(datetime.timezone.utc)
+                expire_date = (now + datetime.timedelta(days=duration_days)).isoformat() if duration_days > 0 else None
+                
+                subs[str(after.id)] = {
+                    "role_id": new_id,
+                    "start_date": now.isoformat(),
+                    "expire_date": expire_date,
+                    "duration": duration_days,
+                    "status": "Active"
+                }
+                self._write_json(self.subs_path, subs)
+                
+        if roles_to_add:
+            try:
+                await after.add_roles(*roles_to_add, reason="Primary subscription role added.")
+            except Exception as e:
+                _log.error(f"Error adding VIP synonym roles: {e}")
+
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
@@ -2398,13 +2508,13 @@ class DiscordBotClient(commands.Bot):
         await self.add_cog(SentinelCog(self, self.ai_engine))
         try:
             synced = await self.tree.sync()
-            print(f"✅ Synchronized {len(synced)} slash commands.")
+            _log.info(f"Synchronized {len(synced)} slash commands.")
         except Exception as e:
-            print(f"❌ Error syncing commands: {e}")
+            _log.error(f"Error syncing commands: {e}")
             await self.log_system_error("Sync Failure", str(e))
 
     async def on_ready(self):
-        print(f'✅ Sentinel AI System initialized as {self.user}')
+        _log.info(f'Sentinel AI System initialized as {self.user}')
 
     # El método send_alert se requiere por la tarea market_monitor de main.py
     async def send_alert(self, symbol, price_action, sentiment_data, ai_insight=None, second_read_note=None):
@@ -2426,6 +2536,20 @@ class DiscordBotClient(commands.Bot):
                 embed.add_field(name="🧠 Desk read", value=f"*{ai_insight}*", inline=False)
             if second_read_note:
                 embed.add_field(name="⚡ Desk second read", value=second_read_note[:1024], inline=False)
+                
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            h = now_utc.hour
+            w = now_utc.weekday()
+            if w >= 5:
+                liquidity = "🟡 Baja Liquidez (Cuidado con manipulación de Fin de Semana)"
+            elif 13 <= h < 21:
+                liquidity = "🟢 Alta Liquidez (Sesión de NY)"
+            elif 8 <= h < 13:
+                liquidity = "🟢 Alta Liquidez (Sesión de Londres)"
+            else:
+                liquidity = "⚪ Liquidez Estándar (Sesión Asiática)"
+            
+            embed.add_field(name="Liquidity Quality", value=liquidity, inline=False)
             
             foot = "Sentinel AI • Elite Analytics"
             if second_read_note:
