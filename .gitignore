@@ -21,3 +21,12 @@ data/user_registry.json
 data/active_trades.json
 data/bot_ai_fuse_state.json
 scratch/
+data/groq_rpd_state.json
+data/global_cache.json
+data/invite_mapping.json
+data/subscriptions.json
+data/heatmap_cache.json
+data/trial_history.json
+data/news_cache.json
+data/trade_logs.json
+
