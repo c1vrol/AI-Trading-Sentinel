@@ -1,6 +1,7 @@
 import ccxt.async_support as ccxt
 import asyncio
 import logging
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -136,10 +137,56 @@ class MarketData:
         if current_vol > ma_vol * 3.0:
             open_p = latest_candle[1]
             close_p = latest_candle[4]
+            change_pct = ((close_p - open_p) / open_p) * 100
             direction = "Compra Agresiva 🟢" if close_p > open_p else "Venta Agresiva 🔴"
-            return {"spike": True, "direction": direction, "volume": current_vol, "ma": ma_vol, "close": close_p}
+            
+            oi_context = await self.get_oi_context(symbol)
+            return {
+                "spike": True, 
+                "direction": direction, 
+                "volume": current_vol, 
+                "ma": ma_vol, 
+                "close": close_p,
+                "open": open_p,
+                "change_pct": change_pct,
+                "oi_context": oi_context
+            }
             
         return None
+
+    async def get_oi_context(self, symbol: str) -> dict:
+        """Returns Open Interest Context dict based on Binance Futures (USDM)."""
+        try:
+            # Format generic symbol to Binance FAPI symbol, e.g. BTC/USDT -> BTCUSDT
+            fapi_symbol = symbol.replace("/", "").replace("USDC", "USDT")
+            url = "https://fapi.binance.com/futures/data/openInterestHist"
+            params = {
+                "symbol": fapi_symbol,
+                "period": "15m",
+                "limit": 2
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data and len(data) >= 2:
+                            prev_oi = float(data[-2].get('sumOpenInterestValue', 0))
+                            curr_oi = float(data[-1].get('sumOpenInterestValue', 0))
+                            if prev_oi > 0:
+                                delta_pct = ((curr_oi - prev_oi) / prev_oi) * 100
+                                if delta_pct > 0:
+                                    trend = f"⤴️ Aumentando (+{delta_pct:.2f}%) (Capital Nuevo)"
+                                else:
+                                    trend = f"⤵️ Disminuyendo ({delta_pct:.2f}%) (Cierre/Squeeze)"
+                                return {
+                                    "value_usd": curr_oi,
+                                    "delta_pct": delta_pct,
+                                    "trend": trend
+                                }
+        except Exception as e:
+            logger.warning(f"Error fetching OI array for {symbol}: {e}")
+            
+        return {"value_usd": 0.0, "delta_pct": 0.0, "trend": "N/A (Desconocido)"}
 
     async def check_hft_signals(self, symbol: str, timeframe: str = '15m') -> dict:
         """Prefiltro técnico para operaciones HFT (Quantum). Detecta extremos de RSI."""

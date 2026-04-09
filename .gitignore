@@ -19,3 +19,4 @@ data/global_cache.json
 data/ai_usage_daily.json
 data/bot_ai_fuse_state.json
 data/gemini_rpd_state.json
+data/performance_log.json

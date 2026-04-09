@@ -1147,9 +1147,10 @@ class SentinelCog(commands.Cog):
         description="Details about the analysis/trade",
         image="Screenshot of the analysis or profit"
     )
+    @app_commands.describe(pnl_pct="Optionally specify the PnL % (e.g., 2.5). Defaults to 1.5 for wins, -0.8 for losses.")
     @app_commands.default_permissions(administrator=True)
     @app_commands.checks.has_role(ADMIN_ROLE_ID)
-    async def cmd_log_win(self, interaction: discord.Interaction, result: Literal["Win ✅", "Loss ❌", "Breakeven ⏸️"], description: str, image: discord.Attachment = None):
+    async def cmd_log_win(self, interaction: discord.Interaction, result: Literal["Win ✅", "Loss ❌", "Breakeven ⏸️"], description: str, pnl_pct: float = None, image: discord.Attachment = None):
         await interaction.response.defer(ephemeral=True)
         wins_channel = self.bot.get_channel(PROFIT_WINS_ID)
         
@@ -1172,8 +1173,13 @@ class SentinelCog(commands.Cog):
         try:
             await wins_channel.send(embed=embed)
             
-            # Persist for Performance Stats
-            await self._record_performance(result, description[:50])
+            # Persist for Performance Stats (with default PnL if not provided)
+            if pnl_pct is None:
+                pnl_val = 1.5 if "Win" in result else -1.0 if "Loss" in result else 0.0
+            else:
+                pnl_val = float(pnl_pct)
+
+            await self._record_performance(result, description[:50], pnl=pnl_val)
             
             await interaction.followup.send("✅ Track record logged successfully.", ephemeral=True)
         except Exception as e:
@@ -1217,7 +1223,7 @@ class SentinelCog(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
         return False
 
-    async def _record_performance(self, result: str, details: str):
+    async def _record_performance(self, result: str, details: str, pnl: float = 0.0):
         """Helper to store win/loss history for overall performance charts."""
         os.makedirs(os.path.dirname(self.perf_log_path), exist_ok=True)
         history = []
@@ -1229,6 +1235,7 @@ class SentinelCog(commands.Cog):
         history.append({
             "timestamp": str(datetime.datetime.now()),
             "result": "Win" if "Win" in result else "Loss" if "Loss" in result else "Neut",
+            "pnl": float(pnl),
             "details": details
         })
         
@@ -1257,8 +1264,57 @@ class SentinelCog(commands.Cog):
         embed.set_footer(text="Verified Performance • Sentinel Intelligence Grid")
         await interaction.followup.send(embed=embed)
 
+    @app_commands.command(name="test_weekly", description="[ADMIN] Force a weekly report and fake test data in profit-wins channel.")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.checks.has_role(ADMIN_ROLE_ID)
+    async def cmd_test_weekly(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        # 1. Generate fake data directly in the log with PnL
+        fake_history = [
+            {"result": "Loss", "pnl": -0.85, "details": "TEST"},
+            {"result": "Win", "pnl": 1.42, "details": "TEST"},
+            {"result": "Win", "pnl": 2.15, "details": "TEST"},
+            {"result": "Loss", "pnl": -1.20, "details": "TEST"},
+            {"result": "Win", "pnl": 0.95, "details": "TEST"},
+            {"result": "Win", "pnl": 1.64, "details": "TEST"},
+            {"result": "Win", "pnl": 3.10, "details": "TEST"}
+        ]
+        os.makedirs(os.path.dirname(self.perf_log_path), exist_ok=True)
+        with open(self.perf_log_path, "w", encoding="utf-8") as f:
+            json.dump(fake_history, f, indent=4)
+            
+        # 2. Trigger an automated win test (ETH)
+        await self.bot.log_automated_record(
+            symbol="ETH/USDT", 
+            entry_price=3000.5, 
+            exit_price=3080.0, 
+            sentiment="BULLISH", 
+            result="Win ✅", 
+            history_prices=[2980, 2990, 3000.5, 3020, 3050, 3080]
+        )
+        
+        # 3. Build and send the Weekly Report Grid to the channel
+        chart_url = await self._generate_total_performance_chart()
+        if chart_url:
+            embed = discord.Embed(
+                title="📊 WEEKLY PERFORMANCE SUMMARY (TEST)",
+                description="Resumen semanal del flujo de aciertos detectados por Sentinel AI.",
+                color=COLOR_QUANTUM,
+                timestamp=discord.utils.utcnow()
+            )
+            embed.set_image(url=chart_url)
+            embed.set_footer(text="Sentinel AI • Performance Grid Update")
+            
+            # Send to PROFIT_WINS
+            channel = self.bot.get_channel(PROFIT_WINS_ID)
+            if channel:
+                await channel.send(embed=embed)
+                
+        await interaction.followup.send("✅ Pruebas enviadas al canal de Profit/Wins.", ephemeral=True)
+
     async def _generate_total_performance_chart(self) -> str | None:
-        """Generates a premium area chart showing cumulative hits (Win Rate)."""
+        """Generates a premium area chart showing cumulative PnL (Equity Curve)."""
         if not os.path.exists(self.perf_log_path):
             return None
             
@@ -1268,44 +1324,82 @@ class SentinelCog(commands.Cog):
             
         if not history: return None
         
-        # Aggregate Win/Loss by index for an equity-style curve
-        cumulative_hits = []
-        current_sum = 0
+        # Aggregate PnL for an equity-style curve
+        equity_curve = [0.0]
+        current_pnl = 0.0
         for entry in history:
-            if entry["result"] == "Win":
-                current_sum += 1
-            cumulative_hits.append(current_sum)
+            pnl_val = entry.get("pnl", 0.0)
+            # If no pnl but result is win/loss, use defaults for old logs
+            if pnl_val == 0.0:
+                res = entry.get("result", "")
+                pnl_val = 1.0 if "Win" in res else -1.0 if "Loss" in res else 0.0
             
-        labels = [str(i+1) for i in range(len(cumulative_hits))]
+            current_pnl += pnl_val
+            equity_curve.append(round(current_pnl, 2))
+            
+        labels = [str(i) for i in range(len(equity_curve))]
+        
+        # Show points only if small dataset
+        show_points = 4 if len(equity_curve) < 15 else 0
         
         chart_config = {
             "type": "line",
             "data": {
                 "labels": labels,
                 "datasets": [{
-                    "label": "Cumulative Profits/Wins",
-                    "data": cumulative_hits,
-                    "borderColor": "rgb(0, 255, 127)",
-                    "backgroundColor": "rgba(0, 255, 127, 0.1)",
+                    "label": "Cumulative Growth (%)",
+                    "data": equity_curve,
+                    "borderColor": "rgba(0, 255, 170, 1)",
+                    "backgroundColor": "rgba(0, 255, 170, 0.15)",
                     "borderWidth": 3,
-                    "pointRadius": 0,
+                    "pointBackgroundColor": "rgba(0, 255, 170, 1)",
+                    "pointRadius": show_points,
                     "fill": True,
-                    "tension": 0.4
+                    "tension": 0.3
                 }]
             },
             "options": {
-                "title": {"display": True, "text": "INSTITUTIONAL PERFORMANCE GRID", "fontColor": "#ffffff", "fontSize": 14},
+                "title": {
+                    "display": True, 
+                    "text": "QUANTUM PERFORMANCE GRID: CUMULATIVE RETURN (%)", 
+                    "fontColor": "#ffffff", 
+                    "fontSize": 14
+                },
                 "legend": {"display": False},
                 "scales": {
-                    "yAxes": [{"gridLines": {"color": "rgba(255, 255, 255, 0.05)"}, "ticks": {"fontColor": "#888"}}],
-                    "xAxes": [{"display": False}]
+                    "yAxes": [{
+                        "scaleLabel": {
+                            "display": True,
+                            "labelString": "Net Return (%)",
+                            "fontColor": "#a0aec0"
+                        },
+                        "gridLines": {
+                            "color": "rgba(255, 255, 255, 0.05)",
+                            "zeroLineColor": "rgba(255, 255, 255, 0.2)"
+                        }, 
+                        "ticks": {
+                            "fontColor": "#a0aec0",
+                            "fontFamily": "monospace",
+                            "beginAtZero": True
+                        }
+                    }],
+                    "xAxes": [{
+                        "scaleLabel": {
+                            "display": True,
+                            "labelString": "Signals Executed",
+                            "fontColor": "#a0aec0"
+                        },
+                        "display": True, 
+                        "ticks": {"display": False},
+                        "gridLines": {"display": False}
+                    }]
                 }
             }
         }
         
         import urllib.parse
         encoded = urllib.parse.quote(json.dumps(chart_config))
-        return f"https://quickchart.io/chart?c={encoded}&w=500&h=300&bkg=%230a0f1e"
+        return f"https://quickchart.io/chart?c={encoded}&w=600&h=350&bkg=%230B101E"
 
     @app_commands.command(name="clear", description="[ADMIN] Deletes a specific amount of messages.")
     @app_commands.describe(amount="Number of messages to delete")
@@ -1938,13 +2032,37 @@ class SentinelCog(commands.Cog):
             spike_data = await self.market_data.analyze_volume_spike("BTC/USDT")
             if spike_data:
                 volume_multiplier = spike_data['volume'] / spike_data['ma']
+                
+                # Campos calculados en market_data
+                tf = "15m"
+                volume_btc = spike_data['volume']
+                close_p = spike_data['close']
+                open_p = spike_data.get('open', close_p)
+                change_pct = spike_data.get('change_pct', 0.0)
+                
+                dollar_value = volume_btc * close_p
+                
+                oi_ctx = spike_data.get('oi_context', {})
+                oi_trend = oi_ctx.get('trend', 'N/A')
+                
+                # Construccion del Embed Institucional
                 embed = discord.Embed(
-                    title=f"🚨 Institutional Volume Spike Detected",
-                    description=f"**Activo:** BTC/USDT\n**Tipo:** {spike_data['direction']}\n**Magnitud:** {volume_multiplier:.1f}x por encima de la media móvil.",
+                    title=f"🚨 Volume Spike Detectado • {spike_data['direction']}",
+                    description=f"**Activo:** BTC/USDT",
                     color=0x8200c9,
                     timestamp=discord.utils.utcnow()
                 )
-                embed.set_footer(text="Sentinel Flow Tracker • Volume intelligence")
+                
+                embed.add_field(name="⏱️ Temporalidad", value=f"**TF:** {tf}", inline=True)
+                embed.add_field(name="💰 Volumen Real", value=f"**{volume_multiplier:.1f}x**\n{volume_btc:.2f} BTC\n(~${dollar_value:,.0f} USD)", inline=True)
+                
+                impacto_txt = f"Entrada: ${open_p:,.2f}\nImpacto: {change_pct:+.2f}%"
+                absorcion = "\n*(Absorbido / Muro de límite)*" if abs(change_pct) < 0.1 else ""
+                embed.add_field(name="🏓 Impacto de Precio", value=f"{impacto_txt}{absorcion}", inline=False)
+                
+                embed.add_field(name="📊 Contexto Derivados (OI)", value=f"{oi_trend}", inline=False)
+                
+                embed.set_footer(text="Sentinel Flow Tracker • Institutional Data")
                 await channel.send(embed=embed)
         except Exception as e:
             print(f"Error en order_flow_tracker: {e}")
@@ -2398,7 +2516,7 @@ class DiscordBotClient(commands.Bot):
             # Log for Global Stats via Cog
             cog = self.get_cog("SentinelCog")
             if cog:
-                await cog._record_performance(result, f"{symbol} trade")
+                await cog._record_performance(result, f"{symbol} trade", pnl=pnl)
         except Exception as e:
             print(f"Failed to send auto-record: {e}")
             

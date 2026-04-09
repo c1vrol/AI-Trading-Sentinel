@@ -440,6 +440,12 @@ class AIEngine:
             return False
         if price <= 0 or tp <= 0 or sl <= 0:
             return False
+            
+        reward = abs(tp - price)
+        risk = abs(price - sl)
+        if risk == 0 or reward < (1.5 * risk):
+            return False
+            
         cap = price * _MAX_TP_SL_MOVE_FRAC
         cond = (condition or "").lower()
         if "oversold" in cond:
@@ -687,6 +693,8 @@ class AIEngine:
             "Other RSI values in SNAPSHOT may be mentioned only as labeled context (e.g. '1h: …'), not as the main gate.\n\n"
             "TP/SL: hypothetical stress-test anchors only, max ~25% from signal_price in DATA. "
             "Oversold / long-leaning → sl < price < tp. Overbought / short-leaning → tp < price < sl.\n"
+            "CRITICAL MATHEMATICS: You must enforce a minimum Risk/Reward ratio of 1:2. "
+            "The potential reward (distance to TP) must be at least twice the potential risk (distance to SL).\n"
             + PROMPT_STRUCTURE_ONLY_EN
         )
         try:
